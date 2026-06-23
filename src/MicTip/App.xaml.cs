@@ -70,6 +70,7 @@ public partial class App : Application
         _tray = new TrayManager();
         _tray.ToggleRequested += OnToggleRequested;
         _tray.SettingsRequested += OnSettingsRequested;
+        _tray.OpenConfigFolderRequested += OnOpenConfigFolderRequested;
         _tray.ExitRequested += OnExitRequested;
 
         // 启动音频核心 (延迟到 Dispatcher 运行后, 确保 UI 窗口能正常显示)
@@ -129,11 +130,23 @@ public partial class App : Application
         _controller?.Toggle();
     }
 
+    private void OnOpenConfigFolderRequested(object? sender, EventArgs e)
+    {
+        if (_settingsService == null) return;
+        try
+        {
+            var dir = _settingsService.CurrentDir;
+            if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", dir) { UseShellExecute = true });
+        }
+        catch { /* 忽略 */ }
+    }
+
     private void OnSettingsRequested(object? sender, EventArgs e)
     {
         if (_settings == null || _deviceManager == null || _controller == null) return;
 
-        var win = new UI.Settings.SettingsWindow(_settings, _deviceManager, ApplySettings);
+        var win = new UI.Settings.SettingsWindow(_settings, _deviceManager, ApplySettings, _settingsService);
         win.ShowDialog();
     }
 

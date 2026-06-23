@@ -1,9 +1,12 @@
+using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using MicTip.Audio;
 using MicTip.Hotkeys;
 using MicTip.Models;
+using MicTip.Services;
 // 本文件位于 MicTip.UI.Settings 命名空间, "Settings" 会被解析为该命名空间,
 // 故给设置模型起别名以消歧。
 using SettingsModel = MicTip.Models.Settings;
@@ -19,6 +22,7 @@ public partial class SettingsWindow : Window
     private readonly SettingsModel _edit;       // 编辑副本
     private readonly AudioDeviceManager _deviceManager;
     private readonly Action<SettingsModel> _apply;
+    private readonly SettingsService _settingsService;
 
     // 捕获热键的输入框标识
     private TextBox? _capturingBox;
@@ -27,15 +31,18 @@ public partial class SettingsWindow : Window
     /// <param name="current">当前设置 (不会被修改)。</param>
     /// <param name="deviceManager">用于填充设备下拉。</param>
     /// <param name="apply">确定时回调, 传入新的设置对象。</param>
-    public SettingsWindow(SettingsModel current, AudioDeviceManager deviceManager, Action<SettingsModel> apply)
+    /// <param name="settingsService">用于显示/操作配置存储位置。</param>
+    public SettingsWindow(SettingsModel current, AudioDeviceManager deviceManager, Action<SettingsModel> apply, SettingsService settingsService)
     {
         _edit = CloneSettings(current);
         _deviceManager = deviceManager;
         _apply = apply;
+        _settingsService = settingsService;
         InitializeComponent();
 
         LoadDeviceList();
         LoadFromEdit();
+        RefreshConfigStorageUi();
         _loading = false;
     }
 
@@ -146,7 +153,12 @@ public partial class SettingsWindow : Window
         _capturingBox = (TextBox)sender;
         e.Handled = true;
 
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        // IME (中文输入法) 开启时, 字母键会被 IME 拦截, e.Key 变成 ImeProcessed;
+        // 真实按键在 e.ImeProcessedKey。同理 DeadCharProcessed / System。
+        var key = e.Key == Key.System ? e.SystemKey
+                : e.Key == Key.ImeProcessed ? e.ImeProcessedKey
+                : e.Key == Key.DeadCharProcessed ? e.DeadCharProcessedKey
+                : e.Key;
 
         // 仅修饰键按下时不捕获, 等主键
         if (key == Key.LeftCtrl || key == Key.RightCtrl
@@ -277,5 +289,59 @@ public partial class SettingsWindow : Window
     {
         DialogResult = false;
         Close();
+    }
+
+    // ===== 配置存储 =====
+
+    /// <summary>刷新配置存储位置 UI (路径 + 便携模式按钮文案)。</summary>
+    private void RefreshConfigStorageUi()
+    {
+        ConfigPathText.Text = _settingsService.CurrentFilePath;
+        TogglePortableBtn.Content = _settingsService.IsPortable ? "退出便携" : "启用便携";
+    }
+
+    private void OnOpenConfigFolder(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // 确保目录存在 (便携模式下 exe 目录必然存在, 这里防御性处理 roaming 情况)
+            var dir = _settingsService.CurrentDir;
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            Process.Start(new ProcessStartInfo("explorer.exe", dir) { UseShellExecute = true });
+        }
+        catch { /* 忽略 */ }
+    }
+
+    private void OnTogglePortable(object sender, RoutedEventArgs e)
+    {
+        var exeDir = Path.GetDirectoryName(Environment.ProcessPath);
+        if (exeDir == null) return;
+        var portableFile = Path.Combine(exeDir, "settings.json");
+
+        try
+        {
+            if (_settingsService.IsPortable)
+            {
+                // 退出便携: 删除 exe 同目录的 settings.json
+                // (下次启动自动回退到 %AppData%)
+                if (File.Exists(portableFile)) File.Delete(portableFile);
+            }
+            else
+            {
+                // 启用便携: 把当前配置复制到 exe 同目录
+                // (若 roaming 不存在则写一份默认值)
+                var current = _settingsService.Load();
+                // 把当前编辑中的设置也一并写入, 避免丢失未保存的修改
+                _settingsService.Save(_edit);
+                // 此时 Save 仍写到 roaming, 手动复制到 exe 目录
+                File.Copy(_settingsService.CurrentFilePath, portableFile, overwrite: true);
+            }
+            RefreshConfigStorageUi();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"切换便携模式失败: {ex.Message}", "MicTip",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 }

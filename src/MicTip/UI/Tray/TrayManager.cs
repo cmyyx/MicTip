@@ -29,6 +29,9 @@ public sealed class TrayManager : IDisposable
     /// <summary>用户点击"设置"。</summary>
     public event EventHandler? SettingsRequested;
 
+    /// <summary>用户点击"打开配置目录"。</summary>
+    public event EventHandler? OpenConfigFolderRequested;
+
     /// <summary>用户点击"退出"。</summary>
     public event EventHandler? ExitRequested;
 
@@ -44,6 +47,8 @@ public sealed class TrayManager : IDisposable
         _statusItem = new WF.ToolStripMenuItem("…") { Enabled = false };
         _settingsItem = new WF.ToolStripMenuItem("设置…");
         _settingsItem.Click += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
+        var openConfigItem = new WF.ToolStripMenuItem("打开配置目录…");
+        openConfigItem.Click += (_, _) => OpenConfigFolderRequested?.Invoke(this, EventArgs.Empty);
         var exitItem = new WF.ToolStripMenuItem("退出");
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
@@ -53,6 +58,7 @@ public sealed class TrayManager : IDisposable
             _statusItem,
             new WF.ToolStripSeparator(),
             _settingsItem,
+            openConfigItem,
             new WF.ToolStripSeparator(),
             exitItem,
         });

@@ -16,16 +16,6 @@
     <Product>MicTip</Product>
     <Description>全局快捷键麦克风静音工具</Description>
 
-    <!-- 单文件发布 -->
-    <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>true</SelfContained>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-
-    <!-- 不开 trimming (WPF + COM 不安全) -->
-    <PublishTrimmed>false</PublishTrimmed>
-
     <!-- 指定管理员权限清单 -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- 指定应用程序图标 -->

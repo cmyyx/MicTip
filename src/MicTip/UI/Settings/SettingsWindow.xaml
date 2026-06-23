@@ -31,6 +31,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- 快捷键 -->
@@ -139,8 +140,36 @@
             </Grid>
         </GroupBox>
 
+        <!-- 配置存储位置 -->
+        <GroupBox Header="配置存储" Grid.Row="3">
+            <Grid Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="100"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="32"/>
+                    <RowDefinition Height="32"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Text="当前位置" Style="{StaticResource Label}" Grid.Row="0"/>
+                <TextBlock x:Name="ConfigPathText" Grid.Row="0" Grid.Column="1" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" Foreground="#4B5563"/>
+                <Button Content="打开目录" Grid.Row="0" Grid.Column="2" Width="80" Height="26" Margin="8,0,0,0"
+                        Click="OnOpenConfigFolder"/>
+
+                <TextBlock Text="便携模式" Style="{StaticResource Label}" Grid.Row="1"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" VerticalAlignment="Center"
+                           Foreground="#6B7280" FontSize="11"
+                           Text="若 exe 同目录下存在 settings.json 则自动启用便携模式, 配置随程序走"/>
+                <Button x:Name="TogglePortableBtn" Grid.Row="1" Grid.Column="2" Width="80" Height="26" Margin="8,0,0,0"
+                        Click="OnTogglePortable" ToolTip="在 exe 同目录创建/删除 settings.json 以切换便携模式"/>
+            </Grid>
+        </GroupBox>
+
         <!-- 底部按钮 -->
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Grid.Row="3" Margin="12,12,12,4">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Grid.Row="4" Margin="12,12,12,4">
             <Button Content="确定" Width="88" Height="30" Margin="0,0,8,0" Click="OnOK"
                     IsDefault="True"/>
             <Button Content="取消" Width="88" Height="30" Click="OnCancel"
