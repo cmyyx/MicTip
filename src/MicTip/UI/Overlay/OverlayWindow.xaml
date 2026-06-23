@@ -17,8 +17,7 @@
             Padding="18,14"
             Margin="10"
             BorderThickness="1"
-            BorderBrush="#33FFFFFF"
-            MouseLeftButtonDown="OnDragStart">
+            BorderBrush="#33FFFFFF">
         <Border.Background>
             <SolidColorBrush x:Name="RootBackground" Color="#E81F2937"/>
         </Border.Background>

@@ -55,7 +55,6 @@ public partial class App : Application
 
         // 悬浮窗 (隐藏初始化)
         _overlay = new OverlayWindow();
-        _overlay.SetPositionCallback(OnOverlayMoved);
         _overlay.PositionAt(_settings.OverlayPosition, new System.Windows.Point(_settings.OverlayX, _settings.OverlayY));
         _overlay.SetShowDeviceName(_settings.ShowDeviceName);
         _overlay.SetShowMeter(_settings.ShowMeter);
@@ -178,15 +177,6 @@ public partial class App : Application
 
         // 刷新悬浮窗可见性 (OverlayEnabled 可能变了)
         RenderOverlay();
-    }
-
-    private void OnOverlayMoved(double x, double y)
-    {
-        if (_settings == null) return;
-        _settings.OverlayPosition = OverlayPosition.Custom;
-        _settings.OverlayX = x;
-        _settings.OverlayY = y;
-        _settingsService?.Save(_settings);
     }
 
     private void OnExitRequested(object? sender, EventArgs e) => Shutdown(0);

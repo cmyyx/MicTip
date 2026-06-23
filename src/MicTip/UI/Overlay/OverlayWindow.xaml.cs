@@ -1,7 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -25,19 +24,15 @@ public partial class OverlayWindow : Window
     private static readonly System.Windows.Media.Color LiveBg = System.Windows.Media.Color.FromRgb(20, 50, 36);         // 深绿背景
     private static readonly System.Windows.Media.Color IdleBg = System.Windows.Media.Color.FromRgb(31, 41, 55);         // 中性深灰
 
-    private Action<double, double>? _onPositionChanged;
     private bool? _targetVisibility;
     private System.Windows.Threading.DispatcherTimer? _hideTimer;
+    private System.Windows.Threading.DispatcherTimer? _topmostTimer;
 
     public OverlayWindow()
     {
         InitializeComponent();
         SourceInitialized += (_, _) => ApplyNoActivate();
     }
-
-    /// <summary>设置位置持久化回调 (拖动结束后调用)。</summary>
-    public void SetPositionCallback(Action<double, double> onPositionChanged)
-        => _onPositionChanged = onPositionChanged;
 
     /// <summary>是否显示音量条。</summary>
     public void SetShowMeter(bool show) => MeterBar.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
@@ -72,14 +67,33 @@ public partial class OverlayWindow : Window
         Top = y;
     }
 
-    // ===== Win32: 让窗口不抢焦点、不进 Alt-Tab =====
+    // ===== Win32: 让窗口不抢焦点、不进 Alt-Tab、点击穿透 =====
     private void ApplyNoActivate()
     {
         var helper = new WindowInteropHelper(this);
         int exStyle = NativeMethods.GetWindowLong(helper.Handle, NativeMethods.GWL_EXSTYLE);
-        // 注意: 不加 WS_EX_TRANSPARENT, 否则无法接收鼠标拖动
-        exStyle |= NativeMethods.WS_EX_NOACTIVATE | NativeMethods.WS_EX_TOOLWINDOW;
+        // WS_EX_NOACTIVATE: 永不获取焦点
+        // WS_EX_TOOLWINDOW: 不进 Alt-Tab / 任务栏
+        // WS_EX_TRANSPARENT: 点击穿透 (鼠标事件直接传给下方窗口)
+        exStyle |= NativeMethods.WS_EX_NOACTIVATE | NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_TRANSPARENT;
         NativeMethods.SetWindowLong(helper.Handle, NativeMethods.GWL_EXSTYLE, exStyle);
+
+        // 周期性重置 z-order 到最顶层, 抵抗其他被激活的置顶窗口覆盖
+        _topmostTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(1)
+        };
+        _topmostTimer.Tick += (_, _) => ReassertTopmost();
+        _topmostTimer.Start();
+    }
+
+    /// <summary>重新将窗口置于顶层 (不激活)。</summary>
+    private void ReassertTopmost()
+    {
+        if (!IsVisible) return;
+        var helper = new WindowInteropHelper(this);
+        const uint flags = NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOOWNERZORDER;
+        NativeMethods.SetWindowPos(helper.Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0, flags);
     }
 
     /// <summary>根据状态刷新外观。pttActive=true 时 Live 显示说话中，否则显示已开启。</summary>
@@ -178,28 +192,29 @@ public partial class OverlayWindow : Window
         _hideTimer.Start();
     }
 
-    // ===== 拖动 =====
-
-    private void OnDragStart(object sender, MouseButtonEventArgs e)
-    {
-        if (e.LeftButton == MouseButtonState.Pressed)
-        {
-            DragMove();
-            // DragMove 返回即松手
-            _onPositionChanged?.Invoke(Left, Top);
-        }
-    }
+    // ===== 拖动 (已移除: 悬浮窗点击穿透, 位置通过设置窗口配置) =====
 
     private static class NativeMethods
     {
         public const int GWL_EXSTYLE = -20;
         public const int WS_EX_NOACTIVATE = 0x08000000;
         public const int WS_EX_TOOLWINDOW = 0x00000080;
+        public const int WS_EX_TRANSPARENT = 0x00000020;
+
+        public static readonly IntPtr HWND_TOPMOST = new(-1);
+
+        public const uint SWP_NOSIZE = 0x0001;
+        public const uint SWP_NOMOVE = 0x0002;
+        public const uint SWP_NOACTIVATE = 0x0010;
+        public const uint SWP_NOOWNERZORDER = 0x0200;
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     }
 }
