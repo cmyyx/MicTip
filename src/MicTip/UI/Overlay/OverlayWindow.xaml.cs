@@ -20,8 +20,10 @@ public partial class OverlayWindow : Window
     // 主色
     private static readonly System.Windows.Media.Color MutedColor = System.Windows.Media.Color.FromRgb(220, 38, 38);    // 红
     private static readonly System.Windows.Media.Color LiveColor = System.Windows.Media.Color.FromRgb(34, 197, 94);     // 绿
+    private static readonly System.Windows.Media.Color WarnColor = System.Windows.Media.Color.FromRgb(245, 158, 11);    // 琥珀
     private static readonly System.Windows.Media.Color MutedBg = System.Windows.Media.Color.FromRgb(60, 20, 24);        // 深红背景
     private static readonly System.Windows.Media.Color LiveBg = System.Windows.Media.Color.FromRgb(20, 50, 36);         // 深绿背景
+    private static readonly System.Windows.Media.Color WarnBg = System.Windows.Media.Color.FromRgb(60, 40, 10);         // 深琥珀背景
     private static readonly System.Windows.Media.Color IdleBg = System.Windows.Media.Color.FromRgb(31, 41, 55);         // 中性深灰
 
     private bool? _targetVisibility;
@@ -182,6 +184,54 @@ public partial class OverlayWindow : Window
         _hideTimer = new System.Windows.Threading.DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(800)
+        };
+        _hideTimer.Tick += (_, _) =>
+        {
+            _hideTimer?.Stop();
+            _hideTimer = null;
+            HideOverlay();
+        };
+        _hideTimer.Start();
+    }
+
+    /// <summary>
+    /// 显示错误提示 (如静音切换失败): 琥珀色样式 + 警告图标,
+    /// 1.5 秒后自动淡出。覆盖普通显示逻辑。
+    /// </summary>
+    public void ShowError(string message)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(() => ShowError(message)));
+            return;
+        }
+
+        // 取消挂起的隐藏
+        _hideTimer?.Stop();
+        _hideTimer = null;
+
+        // 应用错误样式
+        IconText.Text = "⚠";
+        StatusText.Text = message;
+        RootBackground.Color = WarnBg;
+        MeterBar.Foreground = new SolidColorBrush(WarnColor);
+        MeterBar.Value = 0;
+
+        _targetVisibility = true;
+        double startOpacity = Opacity;
+        if (!IsVisible)
+        {
+            startOpacity = 0;
+            Opacity = 0;
+            Show();
+        }
+        var anim = new DoubleAnimation(startOpacity, 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = new QuadraticEase() };
+        BeginAnimation(OpacityProperty, anim);
+
+        // 1.5 秒后自动淡出
+        _hideTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(1500)
         };
         _hideTimer.Tick += (_, _) =>
         {

@@ -82,6 +82,7 @@ public partial class App : Application
 
         // 热键 (键盘+鼠标低级钩子)
         _hotkeyManager = new HotkeyManager(_controller);
+        _hotkeyManager.ToggleFailed += OnToggleFailed;
         _hotkeyManager.Configure(_settings.ToggleHotkey, _settings.PttHotkey);
         _hotkeyManager.Start();
 
@@ -131,7 +132,21 @@ public partial class App : Application
 
     private void OnToggleRequested(object? sender, EventArgs e)
     {
-        _controller?.Toggle();
+        if (_controller == null) return;
+        if (!_controller.Toggle())
+        {
+            // 设备断开或写入失败: 用悬浮窗显示错误提示 (比托盘闪烁更醒目)
+            string msg = _controller.IsDisconnected ? "设备已断开" : "切换失败";
+            _overlay?.ShowError(msg);
+        }
+    }
+
+    /// <summary>热键触发 Toggle 失败时的回调: 直接显示错误提示 (不再重试 Toggle)。</summary>
+    private void OnToggleFailed(object? sender, EventArgs e)
+    {
+        if (_controller == null) return;
+        string msg = _controller.IsDisconnected ? "设备已断开" : "切换失败";
+        _overlay?.ShowError(msg);
     }
 
     private void OnOpenConfigFolderRequested(object? sender, EventArgs e)

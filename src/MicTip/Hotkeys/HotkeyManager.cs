@@ -22,6 +22,9 @@ public sealed class HotkeyManager : IDisposable
     // PTT 防止 keyup 配对丢失 (例如按键匹配按下后状态变化)
     private bool _pttDown;
 
+    /// <summary>Toggle 调用失败 (设备断开或写入失败) 时触发, 用于提示用户。</summary>
+    public event EventHandler? ToggleFailed;
+
     public HotkeyManager(MicMuteController controller)
     {
         _controller = controller;
@@ -63,7 +66,10 @@ public sealed class HotkeyManager : IDisposable
             // Toggle: 仅响应非重复的首次按下
             if (down && !isRepeat && ModifiersMatch(_toggle))
             {
-                _controller.Toggle();
+                if (!_controller.Toggle())
+                {
+                    ToggleFailed?.Invoke(this, EventArgs.Empty);
+                }
             }
             return;
         }
@@ -104,7 +110,10 @@ public sealed class HotkeyManager : IDisposable
         {
             if (down)
             {
-                _controller.Toggle();
+                if (!_controller.Toggle())
+                {
+                    ToggleFailed?.Invoke(this, EventArgs.Empty);
+                }
             }
         }
     }

@@ -201,21 +201,27 @@ public sealed class MicMuteController : IDisposable
 
     // ===== 公开动作 (供热键层调用) =====
 
-    /// <summary>切换静音基线。</summary>
-    public void Toggle()
+    /// <summary>切换静音基线。返回 false 表示设备断开或写入失败。</summary>
+    public bool Toggle()
     {
-        if (_disconnected) return;
-        SetBaseMuted(!_baseMuted);
+        if (_disconnected) return false;
+        return SetBaseMuted(!_baseMuted);
     }
 
-    /// <summary>直接设置静音基线。</summary>
-    public void SetBaseMuted(bool muted)
+    /// <summary>直接设置静音基线。返回 false 表示设备断开或写入失败。</summary>
+    public bool SetBaseMuted(bool muted)
     {
-        if (_disconnected) { return; }
-        if (_baseMuted == muted) { RaiseIfStale(); return; }
+        if (_disconnected) { return false; }
+        if (_baseMuted == muted) { RaiseIfStale(); return true; }
         _baseMuted = muted;
-        ApplyEffectiveToTargets();
+        bool ok = ApplyEffectiveToTargets();
+        if (!ok)
+        {
+            // 写入失败: 回滚状态机, 避免与物理状态不一致
+            _baseMuted = !muted;
+        }
         RaiseStateChanged();
+        return ok;
     }
 
     /// <summary>
@@ -235,23 +241,26 @@ public sealed class MicMuteController : IDisposable
 
     // ===== 写入 Core Audio =====
 
-    private void ApplyEffectiveToTargets()
+    /// <summary>把 EffectiveMuted 写入所有目标设备。返回是否全部成功。</summary>
+    private bool ApplyEffectiveToTargets()
     {
         bool effectiveMuted = _baseMuted && !_pttActive;
+        bool allOk = true;
         _suppressNotification = true;
         try
         {
             foreach (var d in _targets)
             {
                 try { d.AudioEndpointVolume.Mute = effectiveMuted; }
-                catch (COMException) { /* 设备可能刚失效 */ }
-                catch { }
+                catch (COMException) { allOk = false; /* 设备可能刚失效 */ }
+                catch { allOk = false; }
             }
         }
         finally
         {
             _suppressNotification = false;
         }
+        return allOk;
     }
 
     // ===== 电平采样 (悬浮窗音量条用) =====
