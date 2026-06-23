@@ -1,0 +1,61 @@
+# ============================================================
+# MicTip - .NET / Visual Studio gitignore
+# ============================================================
+
+## ----- 编译产物 -----
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Ll]og/
+[Ll]ogs/
+
+## ----- 发布输出 -----
+[Pp]ublish/
+*.publishsettings
+publish/
+
+## ----- Visual Studio / Rider / VSCode 用户文件 -----
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+## ----- NuGet -----
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## ----- 临时文件 -----
+*~
+*.tmp
+*.bak
+*.cache
+*.log
+*.tlog
+
+## ----- 系统文件 -----
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+## ----- 单文件发布产物 (体积大, 不入库) ##
+MicTip.exe
+MicTip.dll
+MicTip.pdb
