@@ -148,7 +148,7 @@ public partial class App : Application
 
     private void OnSettingsRequested(object? sender, EventArgs e)
     {
-        if (_settings == null || _deviceManager == null || _controller == null) return;
+        if (_settings == null || _deviceManager == null || _controller == null || _settingsService == null) return;
 
         var win = new UI.Settings.SettingsWindow(_settings, _deviceManager, ApplySettings, _settingsService);
         win.ShowDialog();
