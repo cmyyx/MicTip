@@ -119,7 +119,11 @@ public partial class App : Application
         else
         {
             _overlay.HideOverlayDelayed();
-            _meterPoller?.Stop();
+            // 仅在悬浮窗已实际隐藏后停止轮询 (淡出动画期间仍需刷新音量条)
+            if (!_overlay.IsVisible)
+            {
+                _meterPoller?.Stop();
+            }
         }
     }
 
