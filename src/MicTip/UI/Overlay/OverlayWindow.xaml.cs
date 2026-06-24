@@ -27,6 +27,7 @@ public partial class OverlayWindow : Window
     private static readonly System.Windows.Media.Color IdleBg = System.Windows.Media.Color.FromRgb(31, 41, 55);         // 中性深灰
 
     private bool? _targetVisibility;
+    private bool _idleAlertMode;
     private System.Windows.Threading.DispatcherTimer? _hideTimer;
     private System.Windows.Threading.DispatcherTimer? _topmostTimer;
 
@@ -35,12 +36,6 @@ public partial class OverlayWindow : Window
         InitializeComponent();
         SourceInitialized += (_, _) => ApplyNoActivate();
     }
-
-    /// <summary>是否显示音量条。</summary>
-    public void SetShowMeter(bool show) => MeterBar.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-
-    /// <summary>是否显示设备名。</summary>
-    public void SetShowDeviceName(bool show) => DeviceText.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
 
     /// <summary>按 OverlayPosition 定位到屏幕边角; 已定位过的则保持。</summary>
     public void PositionAt(OverlayPosition pos, System.Windows.Point custom)
@@ -137,6 +132,69 @@ public partial class OverlayWindow : Window
         MeterBar.Value = Math.Clamp(level, 0, 1);
     }
 
+    // ===== 无声提醒 (独立于 ApplyState 的样式, 琥珀色, 不自动淡出) =====
+
+    /// <summary>展示无声提醒: 琥珀色样式 + 提示文案, 持续显示直到 HideIdleAlert。</summary>
+    public void ShowIdleAlert(string? deviceName, double level)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(() => ShowIdleAlert(deviceName, level)));
+            return;
+        }
+
+        _idleAlertMode = true;
+        // 取消挂起的隐藏
+        _hideTimer?.Stop();
+        _hideTimer = null;
+
+        IconText.Text = "🎤";
+        StatusText.Text = "麦克风似乎没声音 · 说句话确认";
+        RootBackground.Color = WarnBg;
+        MeterBar.Foreground = new SolidColorBrush(WarnColor);
+
+        DeviceText.Text = deviceName ?? "";
+        MeterBar.Value = Math.Clamp(level, 0, 1);
+
+        _targetVisibility = true;
+        double startOpacity = Opacity;
+        if (!IsVisible)
+        {
+            startOpacity = 0;
+            Opacity = 0;
+            Show();
+        }
+        var anim = new DoubleAnimation(startOpacity, 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = new QuadraticEase() };
+        BeginAnimation(OpacityProperty, anim);
+    }
+
+    /// <summary>仅刷新音量条 (提醒展示期间由电平轮询调用)。</summary>
+    public void UpdateMeter(double level)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(() => UpdateMeter(level)));
+            return;
+        }
+        MeterBar.Value = Math.Clamp(level, 0, 1);
+    }
+
+    /// <summary>隐藏无声提醒并退出提醒模式。</summary>
+    public void HideIdleAlert()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(HideIdleAlert));
+            return;
+        }
+        if (!_idleAlertMode) return;
+        _idleAlertMode = false;
+        HideOverlay();
+    }
+
+    /// <summary>当前是否处于无声提醒模式。</summary>
+    public bool IsIdleAlertMode => _idleAlertMode;
+
     // ===== 显示/隐藏 (带淡入淡出) =====
 
     public void ShowOverlay()
@@ -147,6 +205,7 @@ public partial class OverlayWindow : Window
         _hideTimer = null;
         if (_targetVisibility == true) { return; }
         _targetVisibility = true;
+        _idleAlertMode = false;
 
         double startOpacity = Opacity;
         if (!IsVisible)
@@ -211,6 +270,7 @@ public partial class OverlayWindow : Window
         _hideTimer = null;
 
         // 应用错误样式
+        _idleAlertMode = false;
         IconText.Text = "⚠";
         StatusText.Text = message;
         RootBackground.Color = WarnBg;

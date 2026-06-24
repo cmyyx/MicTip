@@ -22,6 +22,8 @@ public sealed class TrayManager : IDisposable
     // 菜单项引用 (用于根据状态启用/禁用/修改)
     private readonly WF.ToolStripMenuItem _statusItem;
     private readonly WF.ToolStripMenuItem _settingsItem;
+    private readonly WF.ToolStripMenuItem _idleMenu;
+    private readonly WF.ToolStripMenuItem _idleResumeItem;
 
     /// <summary>用户左键单击托盘图标, 请求切换静音。</summary>
     public event EventHandler? ToggleRequested;
@@ -34,6 +36,15 @@ public sealed class TrayManager : IDisposable
 
     /// <summary>用户点击"退出"。</summary>
     public event EventHandler? ExitRequested;
+
+    /// <summary>用户请求恢复无声提醒检测。</summary>
+    public event EventHandler? IdleAlertResumeRequested;
+
+    /// <summary>用户请求暂停无声提醒, 参数为暂停时长。</summary>
+    public event EventHandler<TimeSpan>? IdleAlertPauseRequested;
+
+    /// <summary>用户请求永久关闭无声提醒。</summary>
+    public event EventHandler? IdleAlertDisableRequested;
 
     public TrayManager()
     {
@@ -49,6 +60,31 @@ public sealed class TrayManager : IDisposable
         _settingsItem.Click += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
         var openConfigItem = new WF.ToolStripMenuItem("打开配置目录…");
         openConfigItem.Click += (_, _) => OpenConfigFolderRequested?.Invoke(this, EventArgs.Empty);
+
+        // 无声提醒子菜单
+        _idleResumeItem = new WF.ToolStripMenuItem("立即恢复检测");
+        _idleResumeItem.Click += (_, _) => IdleAlertResumeRequested?.Invoke(this, EventArgs.Empty);
+        var pause1h = new WF.ToolStripMenuItem("暂停 1 小时");
+        pause1h.Click += (_, _) => IdleAlertPauseRequested?.Invoke(this, TimeSpan.FromHours(1));
+        var pause4h = new WF.ToolStripMenuItem("暂停 4 小时");
+        pause4h.Click += (_, _) => IdleAlertPauseRequested?.Invoke(this, TimeSpan.FromHours(4));
+        var pauseToday = new WF.ToolStripMenuItem("今日不再提醒");
+        pauseToday.Click += (_, _) => IdleAlertPauseRequested?.Invoke(this, IdleAlertPauseUntilTomorrow());
+        var disableItem = new WF.ToolStripMenuItem("永久关闭");
+        disableItem.Click += (_, _) => IdleAlertDisableRequested?.Invoke(this, EventArgs.Empty);
+
+        _idleMenu = new WF.ToolStripMenuItem("无声提醒");
+        _idleMenu.DropDownItems.AddRange(new WF.ToolStripItem[]
+        {
+            _idleResumeItem,
+            new WF.ToolStripSeparator(),
+            pause1h,
+            pause4h,
+            pauseToday,
+            new WF.ToolStripSeparator(),
+            disableItem,
+        });
+
         var exitItem = new WF.ToolStripMenuItem("退出");
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
@@ -58,6 +94,7 @@ public sealed class TrayManager : IDisposable
             _statusItem,
             new WF.ToolStripSeparator(),
             _settingsItem,
+            _idleMenu,
             openConfigItem,
             new WF.ToolStripSeparator(),
             exitItem,
@@ -66,6 +103,28 @@ public sealed class TrayManager : IDisposable
 
         // 初始图标
         Update(MicState.Disconnected, null);
+        UpdateIdleAlertMenu(enabled: true, paused: false);
+    }
+
+    /// <summary>"今日不再"= 暂停到明天 0 点。</summary>
+    private static TimeSpan IdleAlertPauseUntilTomorrow()
+    {
+        var now = DateTime.Now;
+        var tomorrow = now.Date.AddDays(1);
+        return tomorrow - now;
+    }
+
+    /// <summary>更新无声提醒菜单状态: 功能是否启用 / 是否处于暂停。</summary>
+    public void UpdateIdleAlertMenu(bool enabled, bool paused)
+    {
+        if (System.Windows.Application.Current is { } app && !app.Dispatcher.CheckAccess())
+        {
+            app.Dispatcher.BeginInvoke(new Action(() => UpdateIdleAlertMenu(enabled, paused)));
+            return;
+        }
+        _idleMenu.Enabled = enabled;
+        _idleResumeItem.Enabled = paused;
+        _idleResumeItem.Text = paused ? "立即恢复检测" : "检测中…";
     }
 
     private void OnTrayClick(object? sender, WF.MouseEventArgs e)

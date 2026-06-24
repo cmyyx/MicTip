@@ -32,6 +32,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- 快捷键 -->
@@ -102,11 +103,7 @@
                 </Grid.RowDefinitions>
 
                 <TextBlock Text="选项" Style="{StaticResource Label}" Grid.Row="0"/>
-                <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.Column="1" VerticalAlignment="Center">
-                    <CheckBox x:Name="OverlayEnabledBox" Content="启用悬浮窗" Margin="0,0,16,0" VerticalAlignment="Center"/>
-                    <CheckBox x:Name="ShowDeviceNameBox" Content="显示设备名" Margin="0,0,16,0" VerticalAlignment="Center"/>
-                    <CheckBox x:Name="ShowMeterBox" Content="显示音量条" VerticalAlignment="Center"/>
-                </StackPanel>
+                <CheckBox x:Name="OverlayEnabledBox" Content="启用悬浮窗" Grid.Row="0" Grid.Column="1" VerticalAlignment="Center"/>
 
                 <TextBlock Text="位置对齐" Style="{StaticResource Label}" Grid.Row="1"/>
                 <ComboBox x:Name="PositionBox" Grid.Row="1" Grid.Column="1" VerticalContentAlignment="Center"
@@ -140,8 +137,37 @@
             </Grid>
         </GroupBox>
 
+        <!-- 无声提醒 -->
+        <GroupBox Header="无声提醒" Grid.Row="3">
+            <Grid Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="100"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="32"/>
+                    <RowDefinition Height="32"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Text="启用" Style="{StaticResource Label}" Grid.Row="0"/>
+                <CheckBox x:Name="IdleAlertEnabledBox" Content="麦克风长时间无声音时弹窗提醒" Grid.Row="0" Grid.Column="1" VerticalAlignment="Center"/>
+
+                <TextBlock Text="触发时长" Style="{StaticResource Label}" Grid.Row="1"/>
+                <StackPanel Orientation="Horizontal" Grid.Row="1" Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="无声音 " VerticalAlignment="Center"/>
+                    <TextBox x:Name="IdleThresholdBox" Width="48" Margin="4,4,4,4" VerticalContentAlignment="Center" PreviewTextInput="OnNumericOnly"/>
+                    <TextBlock Text=" 分钟后提醒 (仅电脑活跃时检测)" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,6,0,0"
+                           Foreground="#6B7280" FontSize="11" TextWrapping="Wrap"
+                           Text="提醒弹出时, 按切换静音的快捷键可快速关闭本次提醒 (不会切换静音); 仅在麦克风非静音时检测"/>
+            </Grid>
+        </GroupBox>
+
         <!-- 配置存储位置 -->
-        <GroupBox Header="配置存储" Grid.Row="3">
+        <GroupBox Header="配置存储" Grid.Row="4">
             <Grid Margin="0,4">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="100"/>
@@ -169,7 +195,7 @@
         </GroupBox>
 
         <!-- 底部按钮 -->
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Grid.Row="4" Margin="12,12,12,4">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Grid.Row="5" Margin="12,12,12,4">
             <Button Content="确定" Width="88" Height="30" Margin="0,0,8,0" Click="OnOK"
                     IsDefault="True"/>
             <Button Content="取消" Width="88" Height="30" Click="OnCancel"

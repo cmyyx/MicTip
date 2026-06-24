@@ -25,6 +25,12 @@ public sealed class HotkeyManager : IDisposable
     /// <summary>Toggle 调用失败 (设备断开或写入失败) 时触发, 用于提示用户。</summary>
     public event EventHandler? ToggleFailed;
 
+    /// <summary>
+    /// Toggle 拦截钩子: 在执行默认切换前调用, 返回 true 表示由外部处理 (如关闭无声提醒),
+    /// 不再调用 controller.Toggle()。
+    /// </summary>
+    public Func<bool>? ToggleIntercepted;
+
     public HotkeyManager(MicMuteController controller)
     {
         _controller = controller;
@@ -66,6 +72,7 @@ public sealed class HotkeyManager : IDisposable
             // Toggle: 仅响应非重复的首次按下
             if (down && !isRepeat && ModifiersMatch(_toggle))
             {
+                if (ToggleIntercepted?.Invoke() == true) return;
                 if (!_controller.Toggle())
                 {
                     ToggleFailed?.Invoke(this, EventArgs.Empty);
@@ -110,6 +117,7 @@ public sealed class HotkeyManager : IDisposable
         {
             if (down)
             {
+                if (ToggleIntercepted?.Invoke() == true) return;
                 if (!_controller.Toggle())
                 {
                     ToggleFailed?.Invoke(this, EventArgs.Empty);

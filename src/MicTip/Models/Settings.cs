@@ -47,11 +47,11 @@ public sealed class Settings
 
     public double OverlayY { get; set; } = double.NaN;
 
-    /// <summary>是否在悬浮窗显示音量条。</summary>
-    public bool ShowMeter { get; set; } = true;
+    /// <summary>是否启用无声提醒 (麦克风长时间无声音时弹窗提醒)。</summary>
+    public bool IdleAlertEnabled { get; set; } = false;
 
-    /// <summary>是否在悬浮窗显示设备名。</summary>
-    public bool ShowDeviceName { get; set; } = true;
+    /// <summary>无声多久后触发提醒 (分钟)。默认 5。</summary>
+    public int IdleAlertThresholdMinutes { get; set; } = 5;
 
     /// <summary>产生一份带默认值的设置。</summary>
     public static Settings Default() => new();

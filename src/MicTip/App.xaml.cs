@@ -27,10 +27,13 @@ public partial class App : Application
     private MicMuteController? _controller;
     private VolumeMeterPoller? _meterPoller;
     private HotkeyManager? _hotkeyManager;
+    private UserActivityMonitor? _userActivity;
+    private IdleMicAlerter? _idleAlerter;
 
     // UI 渲染用的最近状态缓存
     private MicStateChangedEventArgs? _snap;
     private double _currentLevel;
+    private bool _idleAlertActive;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -56,14 +59,30 @@ public partial class App : Application
         // 悬浮窗 (隐藏初始化)
         _overlay = new OverlayWindow();
         _overlay.PositionAt(_settings.OverlayPosition, new System.Windows.Point(_settings.OverlayX, _settings.OverlayY));
-        _overlay.SetShowDeviceName(_settings.ShowDeviceName);
-        _overlay.SetShowMeter(_settings.ShowMeter);
 
-        // 电平轮询 → 刷新悬浮窗音量条
+        // 用户活跃检测 + 无声提醒状态机
+        _userActivity = new UserActivityMonitor();
+        _idleAlerter = new IdleMicAlerter(
+            _controller,
+            () => _settings!,
+            _userActivity,
+            OnIdleAlertShow,
+            OnIdleAlertHide);
+
+        // 电平轮询 → 刷新悬浮窗音量条 + 喂入无声检测
         _meterPoller = new VolumeMeterPoller(_controller, level =>
         {
             _currentLevel = level;
-            RenderOverlay();
+            _idleAlerter.OnLevelSample(level);
+            if (_idleAlertActive)
+            {
+                // 提醒展示中: 只刷新音量条, 不走常规可见性逻辑
+                _overlay?.UpdateMeter(level);
+            }
+            else
+            {
+                RenderOverlay();
+            }
         });
 
         // 托盘
@@ -72,17 +91,27 @@ public partial class App : Application
         _tray.SettingsRequested += OnSettingsRequested;
         _tray.OpenConfigFolderRequested += OnOpenConfigFolderRequested;
         _tray.ExitRequested += OnExitRequested;
+        _tray.IdleAlertResumeRequested += OnIdleAlertResume;
+        _tray.IdleAlertPauseRequested += OnIdleAlertPause;
+        _tray.IdleAlertDisableRequested += OnIdleAlertDisable;
+        _tray.UpdateIdleAlertMenu(_settings.IdleAlertEnabled, paused: false);
 
         // 启动音频核心 (延迟到 Dispatcher 运行后, 确保 UI 窗口能正常显示)
-        // 注意: 电平轮询器不在此处启动, 而是由 RenderOverlay 按悬浮窗可见性按需启停
+        // 注意: 电平轮询器不在此处启动, 而是由 RenderOverlay 按悬浮窗可见性按需启停;
+        // 若启用了无声提醒, 则常驻运行
         Dispatcher.BeginInvoke(new Action(() =>
         {
             _controller.Start();
+            if (_settings!.IdleAlertEnabled)
+            {
+                _meterPoller?.Start();
+            }
         }), System.Windows.Threading.DispatcherPriority.Loaded);
 
         // 热键 (键盘+鼠标低级钩子)
         _hotkeyManager = new HotkeyManager(_controller);
         _hotkeyManager.ToggleFailed += OnToggleFailed;
+        _hotkeyManager.ToggleIntercepted = OnToggleIntercepted;
         _hotkeyManager.Configure(_settings.ToggleHotkey, _settings.PttHotkey);
         _hotkeyManager.Start();
 
@@ -96,6 +125,8 @@ public partial class App : Application
         _snap = e;
         // 托盘/悬浮窗样式
         _tray?.Update(e.State, e.DeviceName);
+        // 通知无声提醒: 非静音/断开状态变化可能需要隐藏提醒
+        _idleAlerter?.OnMicStateChanged(e);
         RenderOverlay();
     }
 
@@ -103,6 +134,9 @@ public partial class App : Application
     private void RenderOverlay()
     {
         if (_snap == null || _overlay == null) return;
+
+        // 无声提醒展示中: 由 IdleMicAlerter 管理可见性, 跳过常规逻辑
+        if (_idleAlertActive) return;
 
         _overlay.ApplyState(_snap.State, _snap.DeviceName, _currentLevel, _snap.PttActive);
 
@@ -120,12 +154,60 @@ public partial class App : Application
         else
         {
             _overlay.HideOverlayDelayed();
-            // 仅在悬浮窗已实际隐藏后停止轮询 (淡出动画期间仍需刷新音量条)
-            if (!_overlay.IsVisible)
+            // 仅在悬浮窗已实际隐藏后停止轮询 (淡出动画期间仍需刷新音量条);
+            // 启用了无声提醒时需常驻轮询以持续检测
+            if (!_overlay.IsVisible && _settings?.IdleAlertEnabled != true)
             {
                 _meterPoller?.Stop();
             }
         }
+    }
+
+    // ===== 无声提醒 =====
+
+    private void OnIdleAlertShow()
+    {
+        _idleAlertActive = true;
+        var snap = _controller?.GetSnapshot();
+        _overlay?.ShowIdleAlert(snap?.DeviceName, _currentLevel);
+    }
+
+    private void OnIdleAlertHide()
+    {
+        _idleAlertActive = false;
+        _overlay?.HideIdleAlert();
+        // 隐藏后刷新一次以恢复正常可见性评估
+        RenderOverlay();
+    }
+
+    /// <summary>切换快捷键拦截: 无声提醒正在展示时, 关闭本次提醒而非切换静音。</summary>
+    private bool OnToggleIntercepted()
+    {
+        if (_idleAlerter == null) return false;
+        return _idleAlerter.Dismiss();
+    }
+
+    private void OnIdleAlertResume(object? sender, EventArgs e)
+    {
+        _idleAlerter?.Resume();
+        _tray?.UpdateIdleAlertMenu(_settings?.IdleAlertEnabled == true, paused: false);
+    }
+
+    private void OnIdleAlertPause(object? sender, TimeSpan duration)
+    {
+        _idleAlerter?.Pause(duration);
+        _tray?.UpdateIdleAlertMenu(_settings?.IdleAlertEnabled == true, paused: true);
+    }
+
+    private void OnIdleAlertDisable(object? sender, EventArgs e)
+    {
+        if (_settings == null) return;
+        _settings.IdleAlertEnabled = false;
+        _settingsService?.Save(_settings);
+        _idleAlerter?.OnSettingsChanged();
+        _tray?.UpdateIdleAlertMenu(enabled: false, paused: false);
+        // 关闭常驻轮询 (若悬浮窗也隐藏)
+        if (_overlay is { IsVisible: false }) _meterPoller?.Stop();
     }
 
     // ===== 托盘事件 =====
@@ -179,6 +261,7 @@ public partial class App : Application
         bool positionChanged = next.OverlayPosition != _settings.OverlayPosition
                                || next.OverlayX != _settings.OverlayX
                                || next.OverlayY != _settings.OverlayY;
+        bool idleAlertToggle = next.IdleAlertEnabled != _settings.IdleAlertEnabled;
 
         // 替换生效设置
         _settings.ToggleHotkey = next.ToggleHotkey;
@@ -186,11 +269,11 @@ public partial class App : Application
         _settings.DeviceStrategy = next.DeviceStrategy;
         _settings.SpecificDeviceId = next.SpecificDeviceId;
         _settings.OverlayEnabled = next.OverlayEnabled;
-        _settings.ShowDeviceName = next.ShowDeviceName;
-        _settings.ShowMeter = next.ShowMeter;
         _settings.OverlayPosition = next.OverlayPosition;
         _settings.OverlayX = next.OverlayX;
         _settings.OverlayY = next.OverlayY;
+        _settings.IdleAlertEnabled = next.IdleAlertEnabled;
+        _settings.IdleAlertThresholdMinutes = next.IdleAlertThresholdMinutes;
 
         // 持久化
         _settingsService?.Save(_settings);
@@ -199,12 +282,24 @@ public partial class App : Application
         if (hotkeysChanged) _hotkeyManager?.Configure(_settings.ToggleHotkey, _settings.PttHotkey);
         if (strategyChanged) _controller?.RefreshTargets();
 
-        // 悬浮窗显示项
-        _overlay?.SetShowDeviceName(_settings.ShowDeviceName);
-        _overlay?.SetShowMeter(_settings.ShowMeter);
         if (positionChanged)
         {
             _overlay?.PositionAt(_settings.OverlayPosition, new System.Windows.Point(_settings.OverlayX, _settings.OverlayY));
+        }
+
+        // 无声提醒设置变更: 通知状态机刷新
+        _idleAlerter?.OnSettingsChanged();
+        if (idleAlertToggle)
+        {
+            if (_settings.IdleAlertEnabled)
+            {
+                _meterPoller?.Start();
+            }
+            else if (_overlay is { IsVisible: false })
+            {
+                _meterPoller?.Stop();
+            }
+            _tray?.UpdateIdleAlertMenu(_settings.IdleAlertEnabled, paused: _idleAlerter?.IsPaused ?? false);
         }
 
         // 刷新悬浮窗可见性 (OverlayEnabled 可能变了)

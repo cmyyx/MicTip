@@ -59,8 +59,8 @@ public partial class SettingsWindow : Window
             OverlayPosition = s.OverlayPosition,
             OverlayX = s.OverlayX,
             OverlayY = s.OverlayY,
-            ShowMeter = s.ShowMeter,
-            ShowDeviceName = s.ShowDeviceName,
+            IdleAlertEnabled = s.IdleAlertEnabled,
+            IdleAlertThresholdMinutes = s.IdleAlertThresholdMinutes,
         };
     }
 
@@ -82,8 +82,10 @@ public partial class SettingsWindow : Window
         ToggleHotkeyBox.Text = _edit.ToggleHotkey.ToString();
         PttHotkeyBox.Text = _edit.PttHotkey.ToString();
         OverlayEnabledBox.IsChecked = _edit.OverlayEnabled;
-        ShowDeviceNameBox.IsChecked = _edit.ShowDeviceName;
-        ShowMeterBox.IsChecked = _edit.ShowMeter;
+
+        // 无声提醒
+        IdleAlertEnabledBox.IsChecked = _edit.IdleAlertEnabled;
+        IdleThresholdBox.Text = _edit.IdleAlertThresholdMinutes.ToString();
 
         // 策略下拉
         for (int i = 0; i < StrategyBox.Items.Count; i++)
@@ -263,6 +265,12 @@ public partial class SettingsWindow : Window
 
     // ===== 确定 / 取消 =====
 
+    /// <summary>限制触发时长输入框只接受数字。</summary>
+    private void OnNumericOnly(object sender, TextCompositionEventArgs e)
+    {
+        e.Handled = !int.TryParse(e.Text, out _);
+    }
+
     private void OnOK(object sender, RoutedEventArgs e)
     {
         // Specific 策略必须选了设备
@@ -277,8 +285,13 @@ public partial class SettingsWindow : Window
         if (_edit.DeviceStrategy == DeviceStrategy.Specific)
             _edit.SpecificDeviceId = DeviceBox.Text;
         _edit.OverlayEnabled = OverlayEnabledBox.IsChecked == true;
-        _edit.ShowDeviceName = ShowDeviceNameBox.IsChecked == true;
-        _edit.ShowMeter = ShowMeterBox.IsChecked == true;
+        _edit.IdleAlertEnabled = IdleAlertEnabledBox.IsChecked == true;
+
+        // 无声触发时长: 至少 1 分钟
+        if (int.TryParse(IdleThresholdBox.Text, out int mins) && mins >= 1)
+            _edit.IdleAlertThresholdMinutes = mins;
+        else
+            _edit.IdleAlertThresholdMinutes = 5;
 
         _apply(_edit);
         DialogResult = true;

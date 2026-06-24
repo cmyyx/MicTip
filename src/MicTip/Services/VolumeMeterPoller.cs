@@ -4,7 +4,7 @@ using MicTip.Audio;
 namespace MicTip.Services;
 
 /// <summary>
-/// 以 ~30fps 轮询麦克风峰值电平, 推送到悬浮窗音量条。
+/// 以 ~15fps 轮询麦克风峰值电平, 推送到悬浮窗音量条与无声提醒检测。
 /// 轻量: 仅读一个 COM 属性, 由 UI 线程 DispatcherTimer 驱动。
 /// </summary>
 public sealed class VolumeMeterPoller
@@ -21,7 +21,7 @@ public sealed class VolumeMeterPoller
         _onLevel = onLevel;
         _timer = new DispatcherTimer(DispatcherPriority.Normal)
         {
-            Interval = TimeSpan.FromMilliseconds(33), // ~30fps
+            Interval = TimeSpan.FromMilliseconds(66), // ~15fps
         };
         _timer.Tick += (_, _) =>
         {
