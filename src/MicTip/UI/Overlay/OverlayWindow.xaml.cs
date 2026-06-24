@@ -179,7 +179,8 @@ public partial class OverlayWindow : Window
         MeterBar.Value = Math.Clamp(level, 0, 1);
     }
 
-    /// <summary>隐藏无声提醒并退出提醒模式。</summary>
+    /// <summary>退出无声提醒模式，不立即隐藏。可见性交由后续 RenderOverlay 根据当前麦克风状态决定，
+    /// 以便在检测到声音时先短暂显示"已开启"样式再淡出，避免视觉上一闪而过。</summary>
     public void HideIdleAlert()
     {
         if (!Dispatcher.CheckAccess())
@@ -189,7 +190,8 @@ public partial class OverlayWindow : Window
         }
         if (!_idleAlertMode) return;
         _idleAlertMode = false;
-        HideOverlay();
+        _hideTimer?.Stop();
+        _hideTimer = null;
     }
 
     /// <summary>当前是否处于无声提醒模式。</summary>
