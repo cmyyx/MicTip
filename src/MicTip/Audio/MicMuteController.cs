@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using MicTip.Models;
+using MicTip.Services;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 
@@ -25,6 +26,7 @@ public sealed class MicMuteController : IDisposable
 {
     private readonly AudioDeviceManager _deviceManager;
     private readonly Func<Settings> _getSettings;
+    private readonly Logger? _logger;
 
     // ===== 状态机 =====
     private bool _baseMuted;
@@ -50,10 +52,11 @@ public sealed class MicMuteController : IDisposable
     /// <summary>当前是否处于断开状态 (无可用目标设备)。</summary>
     public bool IsDisconnected => _disconnected;
 
-    public MicMuteController(AudioDeviceManager deviceManager, Func<Settings> getSettings)
+    public MicMuteController(AudioDeviceManager deviceManager, Func<Settings> getSettings, Logger? logger = null)
     {
         _deviceManager = deviceManager;
         _getSettings = getSettings;
+        _logger = logger;
     }
 
     /// <summary>启动: 解析目标设备, 监听设备变更, 同步初始状态。</summary>
@@ -251,9 +254,26 @@ public sealed class MicMuteController : IDisposable
         {
             foreach (var d in _targets)
             {
-                try { d.AudioEndpointVolume.Mute = effectiveMuted; }
-                catch (COMException) { allOk = false; /* 设备可能刚失效 */ }
-                catch { allOk = false; }
+                string? deviceName = null;
+                try { deviceName = d.FriendlyName; } catch { }
+                try
+                {
+                    d.AudioEndpointVolume.Mute = effectiveMuted;
+                }
+                catch (COMException ex)
+                {
+                    allOk = false;
+                    _logger?.LogError(
+                        $"写入设备静音失败 (目标 Mute={effectiveMuted}, 设备={deviceName ?? "?"})",
+                        ex);
+                }
+                catch (Exception ex)
+                {
+                    allOk = false;
+                    _logger?.LogError(
+                        $"写入设备静音失败 (目标 Mute={effectiveMuted}, 设备={deviceName ?? "?"})",
+                        ex);
+                }
             }
         }
         finally

@@ -28,6 +28,7 @@ public partial class OverlayWindow : Window
 
     private bool? _targetVisibility;
     private bool _idleAlertMode;
+    private bool _errorMode;
     private System.Windows.Threading.DispatcherTimer? _hideTimer;
     private System.Windows.Threading.DispatcherTimer? _topmostTimer;
 
@@ -144,6 +145,7 @@ public partial class OverlayWindow : Window
         }
 
         _idleAlertMode = true;
+        _errorMode = false;
         // 取消挂起的隐藏
         _hideTimer?.Stop();
         _hideTimer = null;
@@ -197,6 +199,9 @@ public partial class OverlayWindow : Window
     /// <summary>当前是否处于无声提醒模式。</summary>
     public bool IsIdleAlertMode => _idleAlertMode;
 
+    /// <summary>当前是否处于错误提示模式 (ShowError 触发, 期间阻止 ApplyState 覆盖)。</summary>
+    public bool IsErrorMode => _errorMode;
+
     // ===== 显示/隐藏 (带淡入淡出) =====
 
     public void ShowOverlay()
@@ -208,6 +213,7 @@ public partial class OverlayWindow : Window
         if (_targetVisibility == true) { return; }
         _targetVisibility = true;
         _idleAlertMode = false;
+        _errorMode = false;
 
         double startOpacity = Opacity;
         if (!IsVisible)
@@ -227,6 +233,7 @@ public partial class OverlayWindow : Window
         _hideTimer = null;
         if (_targetVisibility == false) { return; }
         _targetVisibility = false;
+        _errorMode = false;
 
         var anim = new DoubleAnimation(Opacity, 0, TimeSpan.FromMilliseconds(220)) { EasingFunction = new QuadraticEase() };
         anim.Completed += (_, _) => { if (_targetVisibility == false && Opacity <= 0.01) Hide(); };
@@ -273,6 +280,7 @@ public partial class OverlayWindow : Window
 
         // 应用错误样式
         _idleAlertMode = false;
+        _errorMode = true;
         IconText.Text = "⚠";
         StatusText.Text = message;
         RootBackground.Color = WarnBg;

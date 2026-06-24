@@ -30,6 +30,7 @@ public partial class App : Application
     private UserActivityMonitor? _userActivity;
     private IdleMicAlerter? _idleAlerter;
     private UpdateChecker? _updateChecker;
+    private Logger? _logger;
     private string? _pendingUpdateUrl;
 
     // UI 渲染用的最近状态缓存
@@ -53,9 +54,12 @@ public partial class App : Application
         _settingsService = new SettingsService();
         _settings = _settingsService.Load();
 
+        // 日志服务 (与配置文件同目录, 便携模式优先)
+        _logger = new Logger(_settingsService.CurrentDir);
+
         // 音频后端
         _deviceManager = new AudioDeviceManager();
-        _controller = new MicMuteController(_deviceManager, () => _settings!);
+        _controller = new MicMuteController(_deviceManager, () => _settings!, _logger);
         _controller.StateChanged += OnControllerStateChanged;
 
         // 悬浮窗 (隐藏初始化)
@@ -150,6 +154,10 @@ public partial class App : Application
 
         // 无声提醒展示中: 由 IdleMicAlerter 管理可见性, 跳过常规逻辑
         if (_idleAlertActive) return;
+
+        // 错误提示展示中: 由 ShowError 的 1.5s 计时器管理可见性, 跳过常规逻辑
+        // 避免 66ms 音量轮询的 ApplyState 覆盖 "切换失败" 等错误提示
+        if (_overlay.IsErrorMode) return;
 
         _overlay.ApplyState(_snap.State, _snap.DeviceName, _currentLevel, _snap.PttActive);
 
@@ -269,6 +277,7 @@ public partial class App : Application
         {
             // 设备断开或写入失败: 用悬浮窗显示错误提示 (比托盘闪烁更醒目)
             string msg = _controller.IsDisconnected ? "设备已断开" : "切换失败";
+            LogToggleFailed("托盘", msg, _controller.GetSnapshot().DeviceName);
             _overlay?.ShowError(msg);
         }
     }
@@ -278,7 +287,14 @@ public partial class App : Application
     {
         if (_controller == null) return;
         string msg = _controller.IsDisconnected ? "设备已断开" : "切换失败";
+        LogToggleFailed("热键", msg, _controller.GetSnapshot().DeviceName);
         _overlay?.ShowError(msg);
+    }
+
+    /// <summary>记录一次切换失败到日志 (含来源、原因、设备名)。</summary>
+    private void LogToggleFailed(string source, string reason, string? deviceName)
+    {
+        _logger?.LogError($"切换失败 [来源={source}] 原因={reason} 设备={deviceName ?? "?"}");
     }
 
     private void OnOpenConfigFolderRequested(object? sender, EventArgs e)
