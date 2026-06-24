@@ -149,7 +149,7 @@ public partial class OverlayWindow : Window
         _hideTimer = null;
 
         IconText.Text = "🎤";
-        StatusText.Text = "麦克风似乎没声音 · 说句话确认";
+        StatusText.Text = "麦克风似乎没声音";
         RootBackground.Color = WarnBg;
         MeterBar.Foreground = new SolidColorBrush(WarnColor);
 

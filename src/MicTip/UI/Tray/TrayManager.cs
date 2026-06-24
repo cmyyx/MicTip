@@ -31,6 +31,9 @@ public sealed class TrayManager : IDisposable
     /// <summary>用户点击"设置"。</summary>
     public event EventHandler? SettingsRequested;
 
+    /// <summary>用户点击"关于"。</summary>
+    public event EventHandler? AboutRequested;
+
     /// <summary>用户点击"打开配置目录"。</summary>
     public event EventHandler? OpenConfigFolderRequested;
 
@@ -46,6 +49,9 @@ public sealed class TrayManager : IDisposable
     /// <summary>用户请求永久关闭无声提醒。</summary>
     public event EventHandler? IdleAlertDisableRequested;
 
+    /// <summary>用户点击更新气泡通知 (跳转 release 页)。</summary>
+    public event EventHandler? UpdateNotificationClicked;
+
     public TrayManager()
     {
         _notifyIcon = new WF.NotifyIcon
@@ -54,10 +60,13 @@ public sealed class TrayManager : IDisposable
             Text = "MicTip",
         };
         _notifyIcon.MouseClick += OnTrayClick;
+        _notifyIcon.BalloonTipClicked += (_, _) => UpdateNotificationClicked?.Invoke(this, EventArgs.Empty);
 
         _statusItem = new WF.ToolStripMenuItem("…") { Enabled = false };
         _settingsItem = new WF.ToolStripMenuItem("设置…");
         _settingsItem.Click += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
+        var aboutItem = new WF.ToolStripMenuItem("关于…");
+        aboutItem.Click += (_, _) => AboutRequested?.Invoke(this, EventArgs.Empty);
         var openConfigItem = new WF.ToolStripMenuItem("打开配置目录…");
         openConfigItem.Click += (_, _) => OpenConfigFolderRequested?.Invoke(this, EventArgs.Empty);
 
@@ -97,6 +106,7 @@ public sealed class TrayManager : IDisposable
             _idleMenu,
             openConfigItem,
             new WF.ToolStripSeparator(),
+            aboutItem,
             exitItem,
         });
         _notifyIcon.ContextMenuStrip = menu;
@@ -125,6 +135,22 @@ public sealed class TrayManager : IDisposable
         _idleMenu.Enabled = enabled;
         _idleResumeItem.Enabled = paused;
         _idleResumeItem.Text = paused ? "立即恢复检测" : "检测中…";
+    }
+
+    /// <summary>弹出更新通知气泡 (点击可跳转 release 页)。</summary>
+    public void ShowUpdateNotification(string latestVersion)
+    {
+        if (System.Windows.Application.Current is { } app && !app.Dispatcher.CheckAccess())
+        {
+            app.Dispatcher.BeginInvoke(new Action(() => ShowUpdateNotification(latestVersion)));
+            return;
+        }
+        // 气泡超时 10 秒 (实际显示时长由系统决定)
+        _notifyIcon.ShowBalloonTip(
+            10000,
+            "发现新版本",
+            $"MicTip v{latestVersion} 已发布, 点击前往下载。",
+            WF.ToolTipIcon.Info);
     }
 
     private void OnTrayClick(object? sender, WF.MouseEventArgs e)

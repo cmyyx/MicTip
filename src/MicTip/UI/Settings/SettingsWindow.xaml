@@ -177,6 +177,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="32"/>
                     <RowDefinition Height="32"/>
+                    <RowDefinition Height="32"/>
                 </Grid.RowDefinitions>
 
                 <TextBlock Text="当前位置" Style="{StaticResource Label}" Grid.Row="0"/>
@@ -191,6 +192,9 @@
                            Text="若 exe 同目录下存在 settings.json 则自动启用便携模式, 配置随程序走"/>
                 <Button x:Name="TogglePortableBtn" Grid.Row="1" Grid.Column="2" Width="80" Height="26" Margin="8,0,0,0"
                         Click="OnTogglePortable" ToolTip="在 exe 同目录创建/删除 settings.json 以切换便携模式"/>
+
+                <TextBlock Text="更新检查" Style="{StaticResource Label}" Grid.Row="2"/>
+                <CheckBox x:Name="CheckUpdatesBox" Content="启动时自动检查更新" Grid.Row="2" Grid.Column="1" VerticalAlignment="Center"/>
             </Grid>
         </GroupBox>
 

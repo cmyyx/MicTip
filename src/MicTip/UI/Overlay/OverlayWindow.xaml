@@ -41,7 +41,7 @@
             <!-- 文本 + 音量条 -->
             <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
                 <TextBlock x:Name="StatusText" Text="已静音" FontSize="17" FontWeight="SemiBold"
-                           Foreground="White"/>
+                           Foreground="White" TextWrapping="Wrap"/>
                 <TextBlock x:Name="DeviceText" Text="" FontSize="11" Opacity="0.72"
                            Foreground="White" TextTrimming="CharacterEllipsis"
                            Margin="0,2,0,0"/>

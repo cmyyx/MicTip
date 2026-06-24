@@ -29,6 +29,8 @@ public partial class App : Application
     private HotkeyManager? _hotkeyManager;
     private UserActivityMonitor? _userActivity;
     private IdleMicAlerter? _idleAlerter;
+    private UpdateChecker? _updateChecker;
+    private string? _pendingUpdateUrl;
 
     // UI 渲染用的最近状态缓存
     private MicStateChangedEventArgs? _snap;
@@ -94,7 +96,12 @@ public partial class App : Application
         _tray.IdleAlertResumeRequested += OnIdleAlertResume;
         _tray.IdleAlertPauseRequested += OnIdleAlertPause;
         _tray.IdleAlertDisableRequested += OnIdleAlertDisable;
+        _tray.AboutRequested += OnAboutRequested;
+        _tray.UpdateNotificationClicked += OnUpdateNotificationClicked;
         _tray.UpdateIdleAlertMenu(_settings.IdleAlertEnabled, paused: false);
+
+        // 更新检查器
+        _updateChecker = new UpdateChecker();
 
         // 启动音频核心 (延迟到 Dispatcher 运行后, 确保 UI 窗口能正常显示)
         // 注意: 电平轮询器不在此处启动, 而是由 RenderOverlay 按悬浮窗可见性按需启停;
@@ -105,6 +112,12 @@ public partial class App : Application
             if (_settings!.IdleAlertEnabled)
             {
                 _meterPoller?.Start();
+            }
+            // 启动后延迟 10s 检查更新 (不阻塞启动, 静默)
+            if (_settings.CheckUpdatesOnStartup)
+            {
+                Dispatcher.BeginInvoke(new Action(CheckForUpdatesSilently),
+                    System.Windows.Threading.DispatcherPriority.ApplicationIdle);
             }
         }), System.Windows.Threading.DispatcherPriority.Loaded);
 
@@ -210,6 +223,43 @@ public partial class App : Application
         if (_overlay is { IsVisible: false }) _meterPoller?.Stop();
     }
 
+    // ===== 更新检查 =====
+
+    /// <summary>启动时静默检查: 有新版本才弹气泡通知。</summary>
+    private async void CheckForUpdatesSilently()
+    {
+        if (_updateChecker == null) return;
+        var result = await _updateChecker.CheckAsync();
+        if (result.HasUpdate && result.LatestVersion != null)
+        {
+            _pendingUpdateUrl = result.ReleaseUrl;
+            _tray?.ShowUpdateNotification(result.LatestVersion);
+        }
+    }
+
+    /// <summary>用户点击更新气泡 → 打开浏览器跳转 release 页。</summary>
+    private void OnUpdateNotificationClicked(object? sender, EventArgs e)
+    {
+        if (_pendingUpdateUrl == null) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_pendingUpdateUrl)
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch { /* 忽略 */ }
+        _pendingUpdateUrl = null;
+    }
+
+    // ===== 关于窗口 =====
+
+    private void OnAboutRequested(object? sender, EventArgs e)
+    {
+        var win = new UI.About.AboutWindow();
+        win.ShowDialog();
+    }
+
     // ===== 托盘事件 =====
 
     private void OnToggleRequested(object? sender, EventArgs e)
@@ -274,6 +324,7 @@ public partial class App : Application
         _settings.OverlayY = next.OverlayY;
         _settings.IdleAlertEnabled = next.IdleAlertEnabled;
         _settings.IdleAlertThresholdMinutes = next.IdleAlertThresholdMinutes;
+        _settings.CheckUpdatesOnStartup = next.CheckUpdatesOnStartup;
 
         // 持久化
         _settingsService?.Save(_settings);

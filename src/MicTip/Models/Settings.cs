@@ -53,6 +53,9 @@ public sealed class Settings
     /// <summary>无声多久后触发提醒 (分钟)。默认 5。</summary>
     public int IdleAlertThresholdMinutes { get; set; } = 5;
 
+    /// <summary>是否在启动时自动检查更新。默认 true。</summary>
+    public bool CheckUpdatesOnStartup { get; set; } = true;
+
     /// <summary>产生一份带默认值的设置。</summary>
     public static Settings Default() => new();
 }

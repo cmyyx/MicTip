@@ -61,6 +61,7 @@ public partial class SettingsWindow : Window
             OverlayY = s.OverlayY,
             IdleAlertEnabled = s.IdleAlertEnabled,
             IdleAlertThresholdMinutes = s.IdleAlertThresholdMinutes,
+            CheckUpdatesOnStartup = s.CheckUpdatesOnStartup,
         };
     }
 
@@ -86,6 +87,9 @@ public partial class SettingsWindow : Window
         // 无声提醒
         IdleAlertEnabledBox.IsChecked = _edit.IdleAlertEnabled;
         IdleThresholdBox.Text = _edit.IdleAlertThresholdMinutes.ToString();
+
+        // 更新检查
+        CheckUpdatesBox.IsChecked = _edit.CheckUpdatesOnStartup;
 
         // 策略下拉
         for (int i = 0; i < StrategyBox.Items.Count; i++)
@@ -292,6 +296,8 @@ public partial class SettingsWindow : Window
             _edit.IdleAlertThresholdMinutes = mins;
         else
             _edit.IdleAlertThresholdMinutes = 5;
+
+        _edit.CheckUpdatesOnStartup = CheckUpdatesBox.IsChecked == true;
 
         _apply(_edit);
         DialogResult = true;

@@ -1,0 +1,68 @@
+name: Release
+
+# 推送 v* 开头的 tag 时触发发版
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write  # 创建 Release 及上传资产需要
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Extract version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          # tag 形如 v0.1.0 → 0.1.0
+          $tag = "${{ github.ref_name }}"
+          $ver = $tag.TrimStart('v', 'V')
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
+          echo "Extracted version: $ver"
+
+      - name: Inject version into csproj
+        shell: pwsh
+        run: |
+          $csproj = "src/MicTip/MicTip.csproj"
+          $ver = "${{ steps.ver.outputs.version }}"
+          (Get-Content $csproj) -replace '<Version>.*?</Version>', "<Version>$ver</Version>" | Set-Content $csproj
+          echo "Updated $csproj to version $ver"
+
+      - name: Publish Self-Contained
+        run: dotnet publish src/MicTip -c Release -p:PublishProfile=SelfContained --nologo -v q
+
+      - name: Publish Framework-Dependent
+        run: dotnet publish src/MicTip -c Release -p:PublishProfile=FrameworkDependent --nologo -v q
+
+      - name: Rename exes with version
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.version }}"
+          $sc = "src/MicTip/bin/publish/self-contained/MicTip.exe"
+          $fd = "src/MicTip/bin/publish/framework-dependent/MicTip.exe"
+          Copy-Item $sc "MicTip-self-contained-v$ver.exe"
+          Copy-Item $fd "MicTip-framework-dependent-v$ver.exe"
+          echo "Renamed exes:"
+          Get-ChildItem "MicTip-*.exe" | Format-Table Name, Length
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            MicTip-self-contained-v${{ steps.ver.outputs.version }}.exe
+            MicTip-framework-dependent-v${{ steps.ver.outputs.version }}.exe
