@@ -57,12 +57,45 @@ jobs:
           echo "Renamed exes:"
           Get-ChildItem "MicTip-*.exe" | Format-Table Name, Length
 
+      - name: Generate release notes
+        id: notes
+        shell: pwsh
+        run: |
+          # 获取版本号排序的标签列表，找到上一个标签
+          $tags = git tag --sort=-version:refname
+          $currentTag = "${{ github.ref_name }}"
+          $prevTag = $tags | Where-Object { $_ -ne $currentTag } | Select-Object -First 1
+
+          $repoUrl = "${{ github.server_url }}/${{ github.repository }}"
+
+          # 收集 commit 日志
+          if ($prevTag) {
+            $log = git log "$prevTag..HEAD" --oneline --no-decorate
+          } else {
+            $log = git log --oneline --no-decorate
+          }
+
+          $body = "## 更新内容`n`n"
+          foreach ($line in $log) {
+            if ($line -match '^(\w+)\s(.+)') {
+              $sha = $matches[1]
+              $msg = $matches[2]
+              $body += "- $msg [$sha]($repoUrl/commit/$sha)`n"
+            }
+          }
+
+          # 写入多行输出
+          $delimiter = "RELEASE_NOTES_EOF"
+          "body<<$delimiter" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $body | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "$delimiter" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.body }}
           files: |
             MicTip-self-contained-v${{ steps.ver.outputs.version }}.exe
             MicTip-framework-dependent-v${{ steps.ver.outputs.version }}.exe
