@@ -12,9 +12,10 @@
     <AssemblyName>MicTip</AssemblyName>
     <RootNamespace>MicTip</RootNamespace>
     <Version>0.1.0</Version>
-    <Company>MicTip</Company>
+    <Company>璨梦踏月</Company>
     <Product>MicTip</Product>
     <Description>全局快捷键麦克风静音工具</Description>
+    <Copyright>Copyright (c) 2026 璨梦踏月</Copyright>
 
     <!-- 指定管理员权限清单 -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
