@@ -6,6 +6,7 @@ using MicTip.Services;
 using MicTip.Startup;
 using MicTip.UI.Overlay;
 using MicTip.UI.Tray;
+using Microsoft.Win32;
 
 namespace MicTip;
 
@@ -74,6 +75,7 @@ public partial class App : Application
             _userActivity,
             OnIdleAlertShow,
             OnIdleAlertHide);
+        _idleAlerter.PauseStateChanged += OnIdleAlertPauseStateChanged;
 
         // 电平轮询 → 刷新悬浮窗音量条 + 喂入无声检测
         _meterPoller = new VolumeMeterPoller(_controller, level =>
@@ -97,12 +99,16 @@ public partial class App : Application
         _tray.SettingsRequested += OnSettingsRequested;
         _tray.OpenConfigFolderRequested += OnOpenConfigFolderRequested;
         _tray.ExitRequested += OnExitRequested;
+        _tray.RestartRequested += OnRestartRequested;
         _tray.IdleAlertResumeRequested += OnIdleAlertResume;
         _tray.IdleAlertPauseRequested += OnIdleAlertPause;
         _tray.IdleAlertDisableRequested += OnIdleAlertDisable;
         _tray.AboutRequested += OnAboutRequested;
         _tray.UpdateNotificationClicked += OnUpdateNotificationClicked;
-        _tray.UpdateIdleAlertMenu(_settings.IdleAlertEnabled, paused: false);
+        _tray.UpdateIdleAlertMenu(_settings.IdleAlertEnabled, paused: false, pausedUntil: null);
+
+        // 系统电源事件: 睡眠/唤醒适配
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
         // 更新检查器
         _updateChecker = new UpdateChecker();
@@ -211,13 +217,21 @@ public partial class App : Application
     private void OnIdleAlertResume(object? sender, EventArgs e)
     {
         _idleAlerter?.Resume();
-        _tray?.UpdateIdleAlertMenu(_settings?.IdleAlertEnabled == true, paused: false);
+        _tray?.UpdateIdleAlertMenu(_settings?.IdleAlertEnabled == true, paused: false, pausedUntil: null);
     }
 
     private void OnIdleAlertPause(object? sender, TimeSpan duration)
     {
         _idleAlerter?.Pause(duration);
-        _tray?.UpdateIdleAlertMenu(_settings?.IdleAlertEnabled == true, paused: true);
+        _tray?.UpdateIdleAlertMenu(_settings?.IdleAlertEnabled == true, paused: true, pausedUntil: _idleAlerter?.PausedUntil);
+    }
+
+    /// <summary>暂停状态变化回调: 来自暂停自然到期 / Pause / Resume。</summary>
+    private void OnIdleAlertPauseStateChanged()
+    {
+        var enabled = _settings?.IdleAlertEnabled == true;
+        var paused = _idleAlerter?.IsPaused ?? false;
+        _tray?.UpdateIdleAlertMenu(enabled, paused, _idleAlerter?.PausedUntil);
     }
 
     private void OnIdleAlertDisable(object? sender, EventArgs e)
@@ -226,9 +240,65 @@ public partial class App : Application
         _settings.IdleAlertEnabled = false;
         _settingsService?.Save(_settings);
         _idleAlerter?.OnSettingsChanged();
-        _tray?.UpdateIdleAlertMenu(enabled: false, paused: false);
+        _tray?.UpdateIdleAlertMenu(enabled: false, paused: false, pausedUntil: null);
         // 关闭常驻轮询 (若悬浮窗也隐藏)
         if (_overlay is { IsVisible: false }) _meterPoller?.Stop();
+    }
+
+    // ===== 电源事件 (睡眠/唤醒适配) =====
+
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        switch (e.Mode)
+        {
+            case PowerModes.Resume:
+                // 唤醒: 音频 COM 对象可能失效, 重建 enumerator 并刷新目标;
+                // 无声提醒进入宽限期, 避免睡眠时长被计入无声时长而误触发
+                _logger?.LogInfo("系统唤醒, 触发自愈刷新与无声提醒宽限期");
+                _idleAlerter?.OnPowerResume();
+                // 延迟一点再刷新, 给音频服务自身恢复时间
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    try { _deviceManager?.RecreateEnumerator(); } catch { }
+                    try { _controller?.RefreshTargets(); } catch { }
+                }), System.Windows.Threading.DispatcherPriority.Background);
+                break;
+            case PowerModes.Suspend:
+                _logger?.LogInfo("系统进入睡眠, 重置无声提醒计时");
+                _idleAlerter?.OnPowerSuspend();
+                break;
+        }
+    }
+
+    // ===== 重启 =====
+
+    /// <summary>用户点击"重启"菜单: 释放单实例锁后启动新进程并退出当前实例。</summary>
+    private void OnRestartRequested(object? sender, EventArgs e)
+    {
+        try
+        {
+            // 启动新实例 (detached), 与当前实例重叠几秒以避免短暂无程序运行
+            var exePath = Environment.ProcessPath;
+            if (exePath != null)
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo(exePath)
+                {
+                    UseShellExecute = false,
+                    // 不附属于当前进程, 当前进程退出后继续运行
+                };
+                System.Diagnostics.Process.Start(psi);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError("启动新实例失败", ex);
+        }
+        finally
+        {
+            // 先释放单实例锁, 让新实例能获取 Mutex; 然后退出
+            try { _singleInstance?.Dispose(); _singleInstance = null; } catch { }
+            Shutdown(0);
+        }
     }
 
     // ===== 更新检查 =====
@@ -366,7 +436,7 @@ public partial class App : Application
             {
                 _meterPoller?.Stop();
             }
-            _tray?.UpdateIdleAlertMenu(_settings.IdleAlertEnabled, paused: _idleAlerter?.IsPaused ?? false);
+            _tray?.UpdateIdleAlertMenu(_settings.IdleAlertEnabled, _idleAlerter?.IsPaused ?? false, _idleAlerter?.PausedUntil);
         }
 
         // 刷新悬浮窗可见性 (OverlayEnabled 可能变了)
@@ -377,12 +447,15 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _hotkeyManager?.Dispose();
         _meterPoller?.Stop();
         _controller?.Dispose();
         _deviceManager?.Dispose();
         _tray?.Dispose();
+        // 重启路径会提前释放 SingleInstance, 这里避免重复释放
         _singleInstance?.Dispose();
+        _singleInstance = null;
         base.OnExit(e);
     }
 }

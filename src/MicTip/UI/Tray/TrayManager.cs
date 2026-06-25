@@ -23,6 +23,7 @@ public sealed class TrayManager : IDisposable
     private readonly WF.ToolStripMenuItem _statusItem;
     private readonly WF.ToolStripMenuItem _settingsItem;
     private readonly WF.ToolStripMenuItem _idleMenu;
+    private readonly WF.ToolStripMenuItem _idleStatusItem;
     private readonly WF.ToolStripMenuItem _idleResumeItem;
 
     /// <summary>用户左键单击托盘图标, 请求切换静音。</summary>
@@ -49,6 +50,9 @@ public sealed class TrayManager : IDisposable
     /// <summary>用户请求永久关闭无声提醒。</summary>
     public event EventHandler? IdleAlertDisableRequested;
 
+    /// <summary>用户点击"重启"菜单项, 请求重启本程序。</summary>
+    public event EventHandler? RestartRequested;
+
     /// <summary>用户点击更新气泡通知 (跳转 release 页)。</summary>
     public event EventHandler? UpdateNotificationClicked;
 
@@ -71,6 +75,8 @@ public sealed class TrayManager : IDisposable
         openConfigItem.Click += (_, _) => OpenConfigFolderRequested?.Invoke(this, EventArgs.Empty);
 
         // 无声提醒子菜单
+        // _idleStatusItem: 顶部状态行 (禁用), 显示"检测中"或"暂停至 HH:mm"
+        _idleStatusItem = new WF.ToolStripMenuItem("检测中…") { Enabled = false };
         _idleResumeItem = new WF.ToolStripMenuItem("立即恢复检测");
         _idleResumeItem.Click += (_, _) => IdleAlertResumeRequested?.Invoke(this, EventArgs.Empty);
         var pause1h = new WF.ToolStripMenuItem("暂停 1 小时");
@@ -85,6 +91,7 @@ public sealed class TrayManager : IDisposable
         _idleMenu = new WF.ToolStripMenuItem("无声提醒");
         _idleMenu.DropDownItems.AddRange(new WF.ToolStripItem[]
         {
+            _idleStatusItem,
             _idleResumeItem,
             new WF.ToolStripSeparator(),
             pause1h,
@@ -94,6 +101,8 @@ public sealed class TrayManager : IDisposable
             disableItem,
         });
 
+        var restartItem = new WF.ToolStripMenuItem("重启…");
+        restartItem.Click += (_, _) => RestartRequested?.Invoke(this, EventArgs.Empty);
         var exitItem = new WF.ToolStripMenuItem("退出");
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
@@ -107,13 +116,14 @@ public sealed class TrayManager : IDisposable
             openConfigItem,
             new WF.ToolStripSeparator(),
             aboutItem,
+            restartItem,
             exitItem,
         });
         _notifyIcon.ContextMenuStrip = menu;
 
         // 初始图标
         Update(MicState.Disconnected, null);
-        UpdateIdleAlertMenu(enabled: true, paused: false);
+        UpdateIdleAlertMenu(enabled: true, paused: false, pausedUntil: null);
     }
 
     /// <summary>"今日不再"= 暂停到明天 0 点。</summary>
@@ -124,17 +134,25 @@ public sealed class TrayManager : IDisposable
         return tomorrow - now;
     }
 
-    /// <summary>更新无声提醒菜单状态: 功能是否启用 / 是否处于暂停。</summary>
-    public void UpdateIdleAlertMenu(bool enabled, bool paused)
+    /// <summary>更新无声提醒菜单状态: 功能是否启用 / 是否处于暂停 / 暂停到期时间。</summary>
+    public void UpdateIdleAlertMenu(bool enabled, bool paused, DateTime? pausedUntil = null)
     {
         if (System.Windows.Application.Current is { } app && !app.Dispatcher.CheckAccess())
         {
-            app.Dispatcher.BeginInvoke(new Action(() => UpdateIdleAlertMenu(enabled, paused)));
+            app.Dispatcher.BeginInvoke(new Action(() => UpdateIdleAlertMenu(enabled, paused, pausedUntil)));
             return;
         }
         _idleMenu.Enabled = enabled;
         _idleResumeItem.Enabled = paused;
-        _idleResumeItem.Text = paused ? "立即恢复检测" : "检测中…";
+        // 状态行: 暂停时显示到期时间, 否则显示"检测中…"
+        if (paused && pausedUntil.HasValue)
+        {
+            _idleStatusItem.Text = $"暂停中, 至 {pausedUntil.Value:HH:mm}";
+        }
+        else
+        {
+            _idleStatusItem.Text = "检测中…";
+        }
     }
 
     /// <summary>弹出更新通知气泡 (点击可跳转 release 页)。</summary>

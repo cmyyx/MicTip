@@ -38,6 +38,8 @@ public sealed class MicMuteController : IDisposable
     private bool _disconnected = true;
 
     // 防止自身 SetMute 触发 OnVolumeNotification 时回环误判为"外部变更"
+    // 与 ApplyEffectiveToTargets / OnVolumeNotification 共用此锁, 避免跨线程读写 race
+    private readonly object _suppressLock = new();
     private bool _suppressNotification;
 
     // 缓存上一次推送的状态, 用于判断是否需要 RaiseEvent
@@ -87,9 +89,11 @@ public sealed class MicMuteController : IDisposable
     /// <summary>按当前策略重新解析目标设备, 并 (重新) 挂载静音通知。</summary>
     public void RefreshTargets()
     {
-        // 释放旧目标的钩子
+        // 释放旧目标的钩子并 Dispose COM 对象, 避免热插拔/服务重启场景下缓慢泄漏
         DetachFromTargets();
-        _targets.Clear();
+        var old = _targets;
+        _targets = new List<MMDevice>();
+        foreach (var d in old) try { d.Dispose(); } catch { }
 
         var settings = _getSettings();
         List<MMDevice> resolved = new();
@@ -181,7 +185,10 @@ public sealed class MicMuteController : IDisposable
 
     private void OnVolumeNotification(AudioVolumeNotificationData data)
     {
-        if (_suppressNotification) return; // 我们自己改的, 忽略
+        // 复制标志到栈, 避免与 ApplyEffectiveToTargets 写入端 race
+        bool suppressed;
+        lock (_suppressLock) suppressed = _suppressNotification;
+        if (suppressed) return; // 我们自己改的, 忽略
         if (_targets.Count == 0) return;
 
         bool physicalMuted;
@@ -249,7 +256,7 @@ public sealed class MicMuteController : IDisposable
     {
         bool effectiveMuted = _baseMuted && !_pttActive;
         bool allOk = true;
-        _suppressNotification = true;
+        lock (_suppressLock) _suppressNotification = true;
         try
         {
             foreach (var d in _targets)
@@ -278,7 +285,7 @@ public sealed class MicMuteController : IDisposable
         }
         finally
         {
-            _suppressNotification = false;
+            lock (_suppressLock) _suppressNotification = false;
         }
         return allOk;
     }
@@ -300,7 +307,43 @@ public sealed class MicMuteController : IDisposable
             }
             return peak;
         }
-        catch { return 0; }
+        catch (Exception ex)
+        {
+            // COM 对象失效 (常见于 Windows 音频服务重启或睡眠唤醒后):
+            // 静默返回 0 会让"无声提醒"误触发, 故记录日志并触发一次自愈刷新。
+            _logger?.LogError("读取峰值电平失败, 触发设备自愈刷新", ex);
+            ScheduleSelfHealingRefresh();
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// 触发一次带 enumerator 重建的自愈刷新 (防抖合并多次连续失败)。
+    /// 在 COM 线程/UI 线程都可调用, 实际刷新延迟到 400ms 后执行。
+    /// </summary>
+    private void ScheduleSelfHealingRefresh()
+    {
+        lock (_refreshLock)
+        {
+            _refreshDebounce ??= new System.Threading.Timer(
+                _ => { try { SelfHealingRefresh(); } catch { } },
+                null, 400, Timeout.Infinite);
+            _refreshDebounce.Change(400, Timeout.Infinite);
+        }
+    }
+
+    /// <summary>自愈刷新: 先尝试重建 enumerator, 再 RefreshTargets。</summary>
+    private void SelfHealingRefresh()
+    {
+        try
+        {
+            _deviceManager.RecreateEnumerator();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError("重建 MMDeviceEnumerator 失败", ex);
+        }
+        try { RefreshTargets(); } catch { }
     }
 
     /// <summary>当前状态快照 (供外部按需查询, 如电平轮询时附带)。</summary>

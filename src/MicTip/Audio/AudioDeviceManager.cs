@@ -9,7 +9,8 @@ namespace MicTip.Audio;
 /// </summary>
 public sealed class AudioDeviceManager : IDisposable, IMMNotificationClient
 {
-    private readonly MMDeviceEnumerator _enumerator = new();
+    private MMDeviceEnumerator _enumerator = new();
+    private readonly object _enumeratorLock = new();
 
     /// <summary>设备集合或默认设备发生变更时触发 (Phase 3)。</summary>
     public event EventHandler? DevicesChanged;
@@ -23,20 +24,37 @@ public sealed class AudioDeviceManager : IDisposable, IMMNotificationClient
     /// <summary>枚举所有活动的输入(捕获)设备。</summary>
     public IList<MMDevice> EnumerateCaptureDevices()
     {
-        return _enumerator
-            .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-            .ToList();
+        lock (_enumeratorLock)
+        {
+            return _enumerator
+                .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                .ToList();
+        }
     }
 
     /// <summary>按友好名查找设备 (用于 Specific 策略的匹配)。</summary>
     public MMDevice? FindByFriendlyName(string friendlyName)
     {
-        foreach (var d in EnumerateCaptureDevices())
+        // 先取快照再遍历, 未命中的设备统一释放, 避免 COM 引用缓慢泄漏
+        var devices = EnumerateCaptureDevices();
+        try
         {
-            if (d.FriendlyName == friendlyName) return d;
-            d.Dispose();
+            for (int i = 0; i < devices.Count; i++)
+            {
+                var d = devices[i];
+                bool match = false;
+                try { match = d.FriendlyName == friendlyName; } catch { }
+                if (match) return d;
+                d.Dispose();
+            }
+            return null;
         }
-        return null;
+        catch
+        {
+            // 异常路径: 释放剩余设备
+            foreach (var d in devices) try { d.Dispose(); } catch { }
+            throw;
+        }
     }
 
     /// <summary>默认通讯设备 (eCommunications 角色)。</summary>
@@ -44,7 +62,10 @@ public sealed class AudioDeviceManager : IDisposable, IMMNotificationClient
     {
         try
         {
-            return _enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications);
+            lock (_enumeratorLock)
+            {
+                return _enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications);
+            }
         }
         catch { return null; } // 无设备时抛异常
     }
@@ -54,9 +75,27 @@ public sealed class AudioDeviceManager : IDisposable, IMMNotificationClient
     {
         try
         {
-            return _enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+            lock (_enumeratorLock)
+            {
+                return _enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+            }
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// 重建 MMDeviceEnumerator (在原实例疑似失效时调用, 例如 Windows 音频服务重启后)。
+    /// 释放旧实例并注销回调, 再创建新实例并重新注册回调。
+    /// </summary>
+    public void RecreateEnumerator()
+    {
+        lock (_enumeratorLock)
+        {
+            try { _enumerator.UnregisterEndpointNotificationCallback(this); } catch { }
+            try { _enumerator.Dispose(); } catch { }
+            _enumerator = new MMDeviceEnumerator();
+            _enumerator.RegisterEndpointNotificationCallback(this);
+        }
     }
 
     public void Dispose()

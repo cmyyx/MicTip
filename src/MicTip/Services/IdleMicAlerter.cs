@@ -33,15 +33,25 @@ public sealed class IdleMicAlerter
     /// <summary>电脑活跃判定阈值: 过去 30s 内有键鼠输入视为活跃。</summary>
     private static readonly TimeSpan ActiveThreshold = TimeSpan.FromSeconds(30);
 
+    /// <summary>唤醒后宽限期: 系统从睡眠恢复后在此时间内不触发提醒, 等待音频设备稳定与用户实际开始使用。</summary>
+    private static readonly TimeSpan PowerResumeGrace = TimeSpan.FromSeconds(30);
+
     private DateTime? _silentSince;
     private bool _alerting;
     private DateTime? _pausedUntil;
+    private DateTime? _powerResumeUntil;
 
     /// <summary>当前是否正在展示提醒。</summary>
     public bool IsAlerting => _alerting;
 
     /// <summary>当前是否处于托盘暂停 (尚未到期)。</summary>
     public bool IsPaused => _pausedUntil.HasValue && _pausedUntil.Value > DateTime.Now;
+
+    /// <summary>当前暂停到期时间 (未暂停时为 null)。供 UI 显示"暂停至 HH:mm"。</summary>
+    public DateTime? PausedUntil => IsPaused ? _pausedUntil : null;
+
+    /// <summary>暂停状态变化 (进入暂停 / 暂停自然到期 / 手动恢复)。</summary>
+    public event Action? PauseStateChanged;
 
     public IdleMicAlerter(
         MicMuteController controller,
@@ -60,10 +70,11 @@ public sealed class IdleMicAlerter
     /// <summary>由电平轮询驱动 (UI 线程)。level 为 0.0~1.0 峰值。</summary>
     public void OnLevelSample(double level)
     {
-        // 清理已过期的暂停
+        // 清理已过期的暂停: 自然到期时触发事件通知 UI 刷新菜单
         if (_pausedUntil.HasValue && _pausedUntil.Value <= DateTime.Now)
         {
             _pausedUntil = null;
+            PauseStateChanged?.Invoke();
         }
 
         var settings = _getSettings();
@@ -74,6 +85,18 @@ public sealed class IdleMicAlerter
             HideIfAlerting();
             _silentSince = null;
             return;
+        }
+
+        // 唤醒宽限期内不触发提醒, 等待音频与用户活动稳定
+        if (_powerResumeUntil.HasValue && _powerResumeUntil.Value > DateTime.Now)
+        {
+            _silentSince = null;
+            HideIfAlerting();
+            return;
+        }
+        else if (_powerResumeUntil.HasValue)
+        {
+            _powerResumeUntil = null;
         }
 
         var snap = _controller.GetSnapshot();
@@ -171,12 +194,30 @@ public sealed class IdleMicAlerter
         }
         HideIfAlerting();
         _silentSince = null;
+        PauseStateChanged?.Invoke();
     }
 
     /// <summary>立即恢复检测 (取消暂停)。</summary>
     public void Resume()
     {
+        if (_pausedUntil == null) return;
         _pausedUntil = null;
+        PauseStateChanged?.Invoke();
+    }
+
+    /// <summary>系统从睡眠/休眠恢复: 重置计时并设置宽限期, 避免因睡眠时长误触发。</summary>
+    public void OnPowerResume()
+    {
+        _silentSince = null;
+        _powerResumeUntil = DateTime.Now + PowerResumeGrace;
+        HideIfAlerting();
+    }
+
+    /// <summary>系统进入睡眠/休眠前: 重置计时, 避免唤醒瞬间误触发。</summary>
+    public void OnPowerSuspend()
+    {
+        _silentSince = null;
+        HideIfAlerting();
     }
 
     private void HideIfAlerting()
