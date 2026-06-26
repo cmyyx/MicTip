@@ -49,6 +49,13 @@ public sealed class MicMuteController : IDisposable
     private System.Threading.Timer? _refreshDebounce;
     private readonly object _refreshLock = new();
 
+    // ===== 自愈刷新 (独立于设备变更防抖, 避免共享 Timer 导致回调错配 + 永不触发) =====
+    private System.Threading.Timer? _selfHealTimer;
+    // 自愈已排程但尚未执行期间为 true, 用于抑制 66ms 轮询的重复日志和重复排程
+    private volatile bool _selfHealPending;
+    // 自愈执行后的冷却截止时间; 冷却期内静默返回 0, 避免服务持续异常时刷屏
+    private DateTime _selfHealCooldownUntil = DateTime.MinValue;
+
     public event EventHandler<MicStateChangedEventArgs>? StateChanged;
 
     /// <summary>当前是否处于断开状态 (无可用目标设备)。</summary>
@@ -305,12 +312,21 @@ public sealed class MicMuteController : IDisposable
                 double v = d.AudioMeterInformation.MasterPeakValue;
                 if (v > peak) peak = v;
             }
+            // 成功读取: 清除冷却, 下次失败可立即触发自愈
+            _selfHealCooldownUntil = DateTime.MinValue;
             return peak;
         }
         catch (Exception ex)
         {
-            // COM 对象失效 (常见于 Windows 音频服务重启或睡眠唤醒后):
-            // 静默返回 0 会让"无声提醒"误触发, 故记录日志并触发一次自愈刷新。
+            // COM 对象失效 (常见于 Windows 音频服务重启或睡眠唤醒后)。
+            // 66ms 轮询会连续命中此分支, 必须抑制重复日志/排程, 否则日志刷屏且
+            // 自愈 Timer 被 Change(400) 反复延后导致永不执行。
+            // - 自愈已排程 (_selfHealPending): 静默等待执行
+            // - 自愈冷却期内: 静默, 避免服务持续异常时每 400ms 刷一条日志
+            if (_selfHealPending) return 0;
+            if (DateTime.Now < _selfHealCooldownUntil) return 0;
+
+            _selfHealPending = true;
             _logger?.LogError("读取峰值电平失败, 触发设备自愈刷新", ex);
             ScheduleSelfHealingRefresh();
             return 0;
@@ -318,21 +334,20 @@ public sealed class MicMuteController : IDisposable
     }
 
     /// <summary>
-    /// 触发一次带 enumerator 重建的自愈刷新 (防抖合并多次连续失败)。
+    /// 触发一次带 enumerator 重建的自愈刷新 (仅排程一次, 不因后续失败反复延后)。
     /// 在 COM 线程/UI 线程都可调用, 实际刷新延迟到 400ms 后执行。
     /// </summary>
     private void ScheduleSelfHealingRefresh()
     {
-        lock (_refreshLock)
-        {
-            _refreshDebounce ??= new System.Threading.Timer(
-                _ => { try { SelfHealingRefresh(); } catch { } },
-                null, 400, Timeout.Infinite);
-            _refreshDebounce.Change(400, Timeout.Infinite);
-        }
+        // 使用独立的 _selfHealTimer, 不与设备变更防抖 _refreshDebounce 共享:
+        // 共享会导致回调错配 (谁先创建就用谁的回调), 且 Change(400) 被反复调用会
+        // 把触发时间无限延后, 永远不执行。
+        _selfHealTimer ??= new System.Threading.Timer(
+            _ => { try { SelfHealingRefresh(); } catch { } },
+            null, 400, Timeout.Infinite);
     }
 
-    /// <summary>自愈刷新: 先尝试重建 enumerator, 再 RefreshTargets。</summary>
+    /// <summary>自愈刷新: 先尝试重建 enumerator, 再 RefreshTargets。执行后进入冷却。</summary>
     private void SelfHealingRefresh()
     {
         try
@@ -344,6 +359,12 @@ public sealed class MicMuteController : IDisposable
             _logger?.LogError("重建 MMDeviceEnumerator 失败", ex);
         }
         try { RefreshTargets(); } catch { }
+
+        // 清除排程标志, 设置 10s 冷却:
+        // - 若自愈生效, 下次 ReadPeakLevel 成功会立即清除冷却
+        // - 若自愈未生效 (服务持续异常), 冷却期内静默, 避免每 400ms 刷一条日志
+        _selfHealPending = false;
+        _selfHealCooldownUntil = DateTime.Now + TimeSpan.FromSeconds(10);
     }
 
     /// <summary>当前状态快照 (供外部按需查询, 如电平轮询时附带)。</summary>
@@ -383,6 +404,7 @@ public sealed class MicMuteController : IDisposable
     {
         _deviceManager.DevicesChanged -= OnDevicesChanged;
         _refreshDebounce?.Dispose();
+        _selfHealTimer?.Dispose();
         DetachFromTargets();
         foreach (var d in _targets) d.Dispose();
         _targets.Clear();

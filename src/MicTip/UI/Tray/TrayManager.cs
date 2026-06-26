@@ -53,6 +53,9 @@ public sealed class TrayManager : IDisposable
     /// <summary>用户点击"重启"菜单项, 请求重启本程序。</summary>
     public event EventHandler? RestartRequested;
 
+    /// <summary>用户点击"重启 Windows Audio 服务", 请求重启音频服务以恢复失效的 COM 对象。</summary>
+    public event EventHandler? RestartAudioServiceRequested;
+
     /// <summary>用户点击更新气泡通知 (跳转 release 页)。</summary>
     public event EventHandler? UpdateNotificationClicked;
 
@@ -103,6 +106,8 @@ public sealed class TrayManager : IDisposable
 
         var restartItem = new WF.ToolStripMenuItem("重启…");
         restartItem.Click += (_, _) => RestartRequested?.Invoke(this, EventArgs.Empty);
+        var restartAudioItem = new WF.ToolStripMenuItem("重启 Windows Audio 服务…");
+        restartAudioItem.Click += (_, _) => RestartAudioServiceRequested?.Invoke(this, EventArgs.Empty);
         var exitItem = new WF.ToolStripMenuItem("退出");
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
@@ -117,6 +122,7 @@ public sealed class TrayManager : IDisposable
             new WF.ToolStripSeparator(),
             aboutItem,
             restartItem,
+            restartAudioItem,
             exitItem,
         });
         _notifyIcon.ContextMenuStrip = menu;
@@ -169,6 +175,21 @@ public sealed class TrayManager : IDisposable
             "发现新版本",
             $"MicTip v{latestVersion} 已发布, 点击前往下载。",
             WF.ToolTipIcon.Info);
+    }
+
+    /// <summary>弹出普通气泡通知 (用于操作结果反馈)。</summary>
+    public void ShowBalloon(string title, string message, bool warning = false)
+    {
+        if (System.Windows.Application.Current is { } app && !app.Dispatcher.CheckAccess())
+        {
+            app.Dispatcher.BeginInvoke(new Action(() => ShowBalloon(title, message, warning)));
+            return;
+        }
+        _notifyIcon.ShowBalloonTip(
+            5000,
+            title,
+            message,
+            warning ? WF.ToolTipIcon.Warning : WF.ToolTipIcon.Info);
     }
 
     private void OnTrayClick(object? sender, WF.MouseEventArgs e)

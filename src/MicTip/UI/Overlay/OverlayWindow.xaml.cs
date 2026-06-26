@@ -233,10 +233,19 @@ public partial class OverlayWindow : Window
         _hideTimer = null;
         if (_targetVisibility == false) { return; }
         _targetVisibility = false;
-        _errorMode = false;
-
+        // 注意: 不在此处清除 _errorMode。若提前清除, 淡出动画期间 (220ms) RenderOverlay
+        // 会因 IsErrorMode=false 而调用 ApplyState, 把"切换失败"样式覆盖成"已开启",
+        // 造成用户误解。_errorMode 改在动画完成后 (仍处于隐藏目标时) 清除;
+        // 下一次 ShowOverlay/ShowIdleAlert/ShowError 也会重置该标志。
         var anim = new DoubleAnimation(Opacity, 0, TimeSpan.FromMilliseconds(220)) { EasingFunction = new QuadraticEase() };
-        anim.Completed += (_, _) => { if (_targetVisibility == false && Opacity <= 0.01) Hide(); };
+        anim.Completed += (_, _) =>
+        {
+            if (_targetVisibility == false)
+            {
+                _errorMode = false;
+                if (Opacity <= 0.01) Hide();
+            }
+        };
         BeginAnimation(OpacityProperty, anim);
     }
 

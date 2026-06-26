@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using MicTip.Audio;
 using MicTip.Hotkeys;
@@ -100,6 +101,7 @@ public partial class App : Application
         _tray.OpenConfigFolderRequested += OnOpenConfigFolderRequested;
         _tray.ExitRequested += OnExitRequested;
         _tray.RestartRequested += OnRestartRequested;
+        _tray.RestartAudioServiceRequested += OnRestartAudioServiceRequested;
         _tray.IdleAlertResumeRequested += OnIdleAlertResume;
         _tray.IdleAlertPauseRequested += OnIdleAlertPause;
         _tray.IdleAlertDisableRequested += OnIdleAlertDisable;
@@ -298,6 +300,148 @@ public partial class App : Application
             // 先释放单实例锁, 让新实例能获取 Mutex; 然后退出
             try { _singleInstance?.Dispose(); _singleInstance = null; } catch { }
             Shutdown(0);
+        }
+    }
+
+    // ===== 重启 Windows Audio 服务 =====
+
+    /// <summary>
+    /// 用户点击"重启 Windows Audio 服务": 后台执行 net stop/start audiosrv,
+    /// 完成后触发自愈刷新重建失效的 COM 对象。
+    /// 本程序已以管理员权限运行 (app.manifest requireAdministrator), 无需额外提权。
+    /// </summary>
+    private void OnRestartAudioServiceRequested(object? sender, EventArgs e)
+    {
+        // 先提示用户操作进行中, 避免误以为无响应
+        _tray?.ShowBalloon("正在重启音频服务", "正在重启 Windows Audio 服务, 请稍候…");
+        _logger?.LogInfo("用户请求重启 Windows Audio 服务");
+
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            bool ok = RestartAudioServiceCore();
+            // 回到 UI 线程: 刷新设备 + 通知结果
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                // 重置自愈冷却, 确保后续失败能立即重试
+                try { _deviceManager?.RecreateEnumerator(); } catch { }
+                try { _controller?.RefreshTargets(); } catch { }
+                if (ok)
+                {
+                    _tray?.ShowBalloon("音频服务已重启", "Windows Audio 服务已重启, 设备已刷新。");
+                }
+                else
+                {
+                    _tray?.ShowBalloon("重启失败", "重启 Windows Audio 服务失败, 请查看日志。", warning: true);
+                }
+            }));
+        });
+    }
+
+    /// <summary>
+    /// 重启 Audiosrv 服务, 并以 PID 变化验证是否真正重启。
+    /// 使用 PowerShell 的 Restart-Service -Force: 会带着依赖 audiosrv 的服务一并
+    /// 优雅重启, 避免 sc stop 因 1051 错误而失败。
+    /// 本程序已以管理员权限运行 (app.manifest requireAdministrator), 无需 RunAs 提权。
+    /// </summary>
+    private bool RestartAudioServiceCore()
+    {
+        // 1) 记录重启前 PID (最终验证用)
+        int? pidBefore = GetServicePid("audiosrv");
+        _logger?.LogInfo($"重启前 audiosrv PID={pidBefore?.ToString() ?? "(未知)"}");
+
+        // 2) 调用 PowerShell Restart-Service -Force
+        //    -Force: 带着依赖 audiosrv 的服务一并重启 (对应 sc stop 的 1051 场景)
+        //    -ErrorAction Stop: 出错时抛异常, 使 $LASTEXITCODE 非 0
+        _logger?.LogInfo("正在执行 Restart-Service -Name Audiosrv -Force …");
+        (bool ok, string output) = RunCommand(
+            "powershell.exe",
+            "-NoProfile -Command \"try { Restart-Service -Name Audiosrv -Force -ErrorAction Stop; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }\"");
+        _logger?.LogInfo($"Restart-Service 退出 ok={ok}, 输出: {output.Trim()}");
+
+        // 3) 等待服务进程稳定 (Restart-Service 返回时服务应已重启, 给 1s 缓冲)
+        System.Threading.Thread.Sleep(1000);
+
+        // 4) 验证: PID 必须改变, 才能确认服务进程真的被替换了
+        int? pidAfter = GetServicePid("audiosrv");
+        _logger?.LogInfo($"重启后 audiosrv PID={pidAfter?.ToString() ?? "(未知)"}");
+
+        if (pidBefore.HasValue && pidAfter.HasValue && pidBefore.Value != pidAfter.Value)
+        {
+            _logger?.LogInfo($"服务进程已更换 (PID {pidBefore} → {pidAfter}), 重启成功");
+            return true;
+        }
+        if (pidBefore.HasValue && !pidAfter.HasValue)
+        {
+            _logger?.LogError($"重启后 audiosrv 进程不存在 (PID {pidBefore} → null), 服务未恢复运行");
+            return false;
+        }
+        if (!ok)
+        {
+            _logger?.LogError($"Restart-Service 执行失败且 PID 未变 ({pidBefore} → {pidAfter})");
+            return false;
+        }
+        // Restart-Service 返回成功但 PID 未变 (可能服务非常快重启用了相同 PID 池, 极罕见)
+        _logger?.LogInfo($"Restart-Service 返回成功, PID {pidBefore} → {pidAfter} (未变, 但命令已成功)");
+        return true;
+    }
+
+    /// <summary>
+    /// 通过 sc queryex 获取服务进程的 PID。失败返回 null。
+    /// sc queryex 输出含一行 "        PID                : 1234"。
+    /// </summary>
+    private int? GetServicePid(string service)
+    {
+        (bool _, string output) = RunCommand("sc.exe", $"queryex {service}");
+        var match = System.Text.RegularExpressions.Regex.Match(
+            output, @"PID\s*:\s*(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (match.Success && int.TryParse(match.Groups[1].Value, out int pid) && pid > 0)
+        {
+            return pid;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 通用命令执行: 返回 (是否退出码为 0, 标准输出+错误输出合并文本)。
+    /// 异步读流避免管道死锁; 30s 超时避免永久挂起 (PowerShell 启动较慢)。
+    /// </summary>
+    private (bool ok, string output) RunCommand(string exe, string args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(exe, args)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return (false, "Process.Start 返回 null");
+
+            // 异步收集输出, 防止管道缓冲区满导致死锁
+            var sb = new System.Text.StringBuilder();
+            DataReceivedEventHandler onOut = (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+            p.OutputDataReceived += onOut;
+            p.ErrorDataReceived += onOut;
+            p.BeginOutputReadLine();
+            p.BeginErrorReadLine();
+
+            // 超时 30s; PowerShell 启动 + Restart-Service 涉及多个服务, 可能需要 10s+
+            if (!p.WaitForExit(30_000))
+            {
+                try { p.Kill(); } catch { }
+                lock (sb) sb.AppendLine("[超时, 已强制结束]");
+                return (false, sb.ToString());
+            }
+            // 等待异步输出读取完成
+            p.WaitForExit();
+            lock (sb) return (p.ExitCode == 0, sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError($"{exe} {args} 执行异常", ex);
+            return (false, ex.Message);
         }
     }
 
