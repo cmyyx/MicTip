@@ -343,22 +343,58 @@ public sealed class MicMuteController : IDisposable
         // 共享会导致回调错配 (谁先创建就用谁的回调), 且 Change(400) 被反复调用会
         // 把触发时间无限延后, 永远不执行。
         _selfHealTimer ??= new System.Threading.Timer(
-            _ => { try { SelfHealingRefresh(); } catch { } },
+            _ =>
+            {
+                // 必须在 UI 线程执行: MMDeviceEnumerator 和它枚举出的 MMDevice 绑定到
+                // 创建线程的 COM apartment。ReadPeakLevel 由 DispatcherTimer 在 UI 线程 (STA)
+                // 调用, 若在线程池线程 (MTA) 重建 enumerator, 后续 UI 线程访问
+                // AudioMeterInformation 会因跨 apartment QueryInterface 失败而抛
+                // InvalidCastException (E_NOINTERFACE) — 这正是 "重启软件能恢复,
+                // 但进程内自愈无效" 的根因。
+                try
+                {
+                    var disp = System.Windows.Application.Current?.Dispatcher;
+                    if (disp != null) disp.Invoke(SelfHealingRefresh);
+                    else SelfHealingRefresh();
+                }
+                catch { }
+            },
             null, 400, Timeout.Infinite);
     }
 
     /// <summary>自愈刷新: 先尝试重建 enumerator, 再 RefreshTargets。执行后进入冷却。</summary>
     private void SelfHealingRefresh()
     {
+        bool recreated = false, refreshed = false;
         try
         {
             _deviceManager.RecreateEnumerator();
+            recreated = true;
         }
         catch (Exception ex)
         {
             _logger?.LogError("重建 MMDeviceEnumerator 失败", ex);
         }
-        try { RefreshTargets(); } catch { }
+        try { RefreshTargets(); refreshed = true; }
+        catch (Exception ex) { _logger?.LogError("RefreshTargets 失败", ex); }
+
+        // 立即验证新 COM 对象在 UI 线程是否可用: 唤醒后音频服务慢恢复时, 即使
+        // enumerator 重建成功, 端点对象本身可能仍是坏的, 此时验证会暴露问题
+        // 而非靠下一次 66ms 轮询被动发现。
+        bool verified = false;
+        if (_targets.Count > 0)
+        {
+            try
+            {
+                _ = _targets[0].AudioMeterInformation.MasterPeakValue;
+                verified = true;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("自愈后验证读峰值仍失败", ex);
+            }
+        }
+        _logger?.LogInfo($"自愈刷新完成: 重建枚举器={recreated}, 刷新目标={refreshed}, 验证读峰值={verified}, 目标数={_targets.Count}");
 
         // 清除排程标志, 设置 10s 冷却:
         // - 若自愈生效, 下次 ReadPeakLevel 成功会立即清除冷却
