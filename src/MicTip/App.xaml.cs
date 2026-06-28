@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Windows;
+using System.Windows.Interop;
 using MicTip.Audio;
 using MicTip.Hotkeys;
 using MicTip.Models;
@@ -67,6 +68,11 @@ public partial class App : Application
         // 悬浮窗 (隐藏初始化)
         _overlay = new OverlayWindow();
         _overlay.PositionAt(_settings.OverlayPosition, new System.Windows.Point(_settings.OverlayX, _settings.OverlayY));
+        // 预热: 强制创建 HWND + 触发 SourceInitialized (ApplyNoActivate 设置 WS_EX_NOACTIVATE
+        // 等样式), 把首次 Show() 时最重的 HWND 创建/COM interop 初始化移到启动期。
+        // 否则首次按热键静音时 Show() 会同步完成 HWND 创建 + 模板应用 + 首次布局/渲染,
+        // 约 100~300ms 可感知延迟; 后续 Show() 因 HWND 已存在而快得多。
+        new WindowInteropHelper(_overlay).EnsureHandle();
 
         // 用户活跃检测 + 无声提醒状态机
         _userActivity = new UserActivityMonitor();
@@ -254,16 +260,13 @@ public partial class App : Application
         switch (e.Mode)
         {
             case PowerModes.Resume:
-                // 唤醒: 音频 COM 对象可能失效, 重建 enumerator 并刷新目标;
+                // 唤醒: 音频 COM 对象可能失效, 通过自愈流程刷新 (复用 SelfHealingRefresh 的
+                // "重建枚举器 + 刷新目标 + 验证 + 日志" 完整路径, 避免空 catch 吞错);
                 // 无声提醒进入宽限期, 避免睡眠时长被计入无声时长而误触发
                 _logger?.LogInfo("系统唤醒, 触发自愈刷新与无声提醒宽限期");
                 _idleAlerter?.OnPowerResume();
-                // 延迟一点再刷新, 给音频服务自身恢复时间
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    try { _deviceManager?.RecreateEnumerator(); } catch { }
-                    try { _controller?.RefreshTargets(); } catch { }
-                }), System.Windows.Threading.DispatcherPriority.Background);
+                // TriggerSelfHealingRefresh 内部 400ms 延迟 + Dispatcher.Invoke, 给音频服务恢复时间
+                _controller?.TriggerSelfHealingRefresh();
                 break;
             case PowerModes.Suspend:
                 _logger?.LogInfo("系统进入睡眠, 重置无声提醒计时");
